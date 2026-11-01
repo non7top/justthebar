@@ -7,8 +7,6 @@ const BUTTON_MAX_LONG: f32 = 180.0;
 const BUTTON_VERTICAL_LONG: f32 = 30.0;
 const PAD: f32 = 4.0;
 const GAP: f32 = 2.0;
-/// The Start button art stops growing here, so a thick side bar does not get a giant orb.
-const START_MAX_SIDE: f32 = 54.0;
 
 /// The clock sits at the far end of the bar. `scale` is dpi / 96.
 pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
@@ -35,22 +33,23 @@ pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: us
     layout_from(edge, width, height, scale, count, 0.0)
 }
 
-/// Like `layout_buttons`, but when `square_first` the first rect is a square as wide as the bar is
-/// thick (for button art) and the other buttons share what is left.
+/// Like `layout_buttons`, but with `start_size` (pixels at 100% scale) the first rect is a square
+/// for button art, as large as that but never thicker than the bar, centered across the bar. The
+/// other buttons share what is left.
 pub fn layout_rows(
     edge: Edge,
     width: f32,
     height: f32,
     scale: f32,
     count: usize,
-    square_first: bool,
+    start_size: Option<f32>,
 ) -> Vec<Rect> {
-    if !square_first || count == 0 {
+    let Some(start_size) = start_size.filter(|_| count > 0) else {
         return layout_buttons(edge, width, height, scale, count);
-    }
+    };
     let pad = PAD * scale;
     let thickness = if edge.is_horizontal() { height } else { width };
-    let side = (thickness - 2.0 * pad).clamp(0.0, START_MAX_SIDE * scale);
+    let side = (thickness - 2.0 * pad).clamp(0.0, start_size * scale);
     let across = (thickness - side) / 2.0;
     let (left, top) = if edge.is_horizontal() {
         (pad, across)
@@ -237,30 +236,27 @@ mod tests {
     #[test]
     fn a_square_first_button_pushes_the_rest_along() {
         let plain = layout_buttons(Edge::Bottom, 1920.0, 40.0, 1.0, 3);
-        let rows = layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 4, true);
+        let rows = layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 4, Some(54.0));
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].right - rows[0].left, rows[0].bottom - rows[0].top);
         assert_eq!(rows[0].bottom - rows[0].top, 32.0);
         assert!(rows[1].left >= rows[0].right);
         assert!(rows[1].left > plain[0].left);
-        assert_eq!(
-            layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 3, false),
-            plain
-        );
-        let side = layout_rows(Edge::Left, 40.0, 600.0, 1.0, 2, true);
+        assert_eq!(layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None), plain);
+        let side = layout_rows(Edge::Left, 40.0, 600.0, 1.0, 2, Some(54.0));
         assert_eq!(side[0].right - side[0].left, 32.0);
         assert!(side[1].top >= side[0].bottom);
-        assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, true).is_empty());
+        assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, Some(54.0)).is_empty());
     }
 
     #[test]
     fn the_square_first_button_stops_growing_and_is_centered_on_a_thick_bar() {
-        let rows = layout_rows(Edge::Right, 200.0, 1080.0, 1.0, 2, true);
+        let rows = layout_rows(Edge::Right, 200.0, 1080.0, 1.0, 2, Some(54.0));
         assert_eq!(rows[0].right - rows[0].left, 54.0);
         assert_eq!(rows[0].bottom - rows[0].top, 54.0);
         assert_eq!(rows[0].left, 73.0);
         assert!(rows[1].top >= rows[0].bottom);
-        let scaled = layout_rows(Edge::Bottom, 1920.0, 200.0, 2.0, 2, true);
+        let scaled = layout_rows(Edge::Bottom, 1920.0, 200.0, 2.0, 2, Some(54.0));
         assert_eq!(scaled[0].bottom - scaled[0].top, 108.0);
         assert_eq!(scaled[0].top, 46.0);
     }

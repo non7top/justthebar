@@ -91,6 +91,8 @@ pub struct StartView {
     /// How much of the hot frame is mixed over the normal one, 0 to 1.
     pub blend: f32,
     pub pressed: bool,
+    /// Longest side of the art button in pixels at 100% scale.
+    pub size: f32,
 }
 
 /// What one task button shows.
@@ -168,6 +170,12 @@ fn fit(rect: Rect, width: u32, height: u32) -> Rect {
     }
 }
 
+/// The size of the Start button when it is drawn from art (always the first button).
+pub fn start_art_size(buttons: &[ButtonView]) -> Option<f32> {
+    let start = buttons.first()?.start.as_ref()?;
+    start.frames.as_ref().map(|_| start.size)
+}
+
 pub fn clock_text(hour: u16, minute: u16) -> String {
     format!("{hour:02}:{minute:02}")
 }
@@ -191,13 +199,16 @@ pub fn build_scene(
         color: white,
         leading: false,
     }];
-    let art_first = buttons
-        .first()
-        .and_then(|b| b.start.as_ref())
-        .is_some_and(|s| s.frames.is_some());
-    for (rect, button) in layout_rows(edge, width, height, scale, buttons.len(), art_first)
-        .into_iter()
-        .zip(buttons)
+    for (rect, button) in layout_rows(
+        edge,
+        width,
+        height,
+        scale,
+        buttons.len(),
+        start_art_size(buttons),
+    )
+    .into_iter()
+    .zip(buttons)
     {
         if let Some(frames) = button.start.as_ref().and_then(|s| s.frames.as_ref()) {
             let start = button.start.as_ref().expect("checked above");
@@ -409,6 +420,7 @@ mod tests {
             frames: Some([frame(1), frame(2), frame(3)]),
             blend,
             pressed,
+            size: 54.0,
         }
     }
 
@@ -490,6 +502,7 @@ mod tests {
                 frames: None,
                 blend: 0.0,
                 pressed: false,
+                size: 54.0,
             }))],
         );
         assert_eq!(drawn.fills.len(), 5);

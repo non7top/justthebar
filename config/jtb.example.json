@@ -24,7 +24,8 @@
     "command": "C:\\Program Files\\Open-Shell\\StartMenu.exe",
     "args": ["-toggle"],
     "label": "Start",
-    "image": "start-button.png"
+    "image": "start-button.png",
+    "size": 54
   },
   "tray": {
     "enabled": false,

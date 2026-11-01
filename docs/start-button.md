@@ -14,19 +14,23 @@ In `jtb.json`:
   "command": "C:\\Program Files\\Open-Shell\\StartMenu.exe",
   "args": ["-toggle"],
   "label": "Start",
-  "image": "start-button.png"
+  "image": "start-button.png",
+  "size": 54
 }
 ```
 
-Every key but `enabled` is optional and the values above are the defaults. In Open-Shell's settings
-(tick "Show all settings", tab "Menu Look") enable "Align start menu to working area", so the menu
-opens against the work area and not against the hidden Explorer taskbar.
+Every key but `enabled` is optional and the values above are the defaults.
+
+Known limit: Open-Shell places its menu from the position of Explorer's taskbar, which is hidden at
+the bottom-left, so the menu opens there and not next to the button. The "Align start menu to
+working area" setting does not change this.
 
 ## Look
 
 Without an image the button is four small squares and the label.
 
-With an image the button shows that art instead: a square at the start of the bar, with the hot
+With an image the button shows that art instead: a square at the start of the bar, `size` pixels
+wide at 100% scale (never thicker than the bar, centered across it), with the hot
 frame faded in over the normal one while the pointer is on it (about 300 ms, like Open-Shell) and
 the pressed frame while the mouse button is down.
 

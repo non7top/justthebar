@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use jtb_core::buttons::{hit_test, layout_rows};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
-use jtb_core::scene::{build_scene, ButtonView, Color, Drag, StartView};
+use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
@@ -355,17 +355,13 @@ fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let views = crate::bar_views(task_monitor_of(hwnd));
     let count = views.len();
-    let art_first = views
-        .first()
-        .and_then(|v| v.start.as_ref())
-        .is_some_and(|s| s.frames.is_some());
     let rects = layout_rows(
         bar.edge(),
         width as f32,
         height as f32,
         scale,
         count,
-        art_first,
+        start_art_size(&views),
     );
     hit_test(&rects, x, y)
 }

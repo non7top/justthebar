@@ -418,6 +418,7 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
             frames: start_frames(&config.image),
             blend: 0.0,
             pressed: false,
+            size: config.size as f32,
         }),
         icon: None,
     };

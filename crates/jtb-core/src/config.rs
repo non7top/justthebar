@@ -141,6 +141,8 @@ pub struct StartConfig {
     /// Button art in Open-Shell's strip format, relative to the exe folder; a missing file gives
     /// the drawn button.
     pub image: String,
+    /// Longest side of the art button in pixels at 100% scale; a thinner bar makes it smaller.
+    pub size: u32,
 }
 
 impl Default for StartConfig {
@@ -151,6 +153,7 @@ impl Default for StartConfig {
             args: vec!["-toggle".to_string()],
             label: "Start".to_string(),
             image: "start-button.png".to_string(),
+            size: 54,
         }
     }
 }
@@ -279,6 +282,12 @@ impl Config {
         if config.start.enabled && config.start.command.trim().is_empty() {
             return Err("the start button needs a command".to_string());
         }
+        if !(8..=512).contains(&config.start.size) {
+            return Err(format!(
+                "start.size must be 8..512, got {}",
+                config.start.size
+            ));
+        }
         if config.tray.enabled && config.tray.bar >= config.bars.len() {
             return Err(format!(
                 "tray.bar is {} but there are only {} bars",
@@ -402,6 +411,16 @@ mod tests {
         assert!(Config::parse(r#"{"start": {"enabled": true, "command": " "}}"#).is_err());
         assert!(Config::parse(r#"{"start": {"enabled": false, "command": ""}}"#).is_ok());
         assert!(Config::parse(r#"{"start": {"colour": "red"}}"#).is_err());
+        assert_eq!(defaults.size, 54);
+        assert_eq!(
+            Config::parse(r#"{"start": {"size": 80}}"#)
+                .unwrap()
+                .start
+                .size,
+            80
+        );
+        assert!(Config::parse(r#"{"start": {"size": 7}}"#).is_err());
+        assert!(Config::parse(r#"{"start": {"size": 513}}"#).is_err());
     }
 
     #[test]
