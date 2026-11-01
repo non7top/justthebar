@@ -449,7 +449,10 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
             },
         },
         Action::Launch => launch_click(&click, &pins),
-        Action::ToggleFold => toggle_fold(click.key()),
+        Action::ToggleFold => match &click {
+            Click::Header { windows, .. } if windows.is_empty() => launch_click(&click, &pins),
+            _ => toggle_fold(click.key()),
+        },
     }
 }
 

@@ -14,8 +14,8 @@
     "mode": "accordion"
   },
   "mouse": {
-    "header_left": "launch",
-    "header_middle": "toggle_fold",
+    "header_left": "toggle_fold",
+    "header_middle": "launch",
     "window_left": "activate",
     "window_middle": "none"
   },

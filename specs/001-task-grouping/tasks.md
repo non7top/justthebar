@@ -3,7 +3,7 @@
 - [x] T001 Grouping model: `Task.exe`, `Rules`, `build_rows`, tests (todo #2)
 - [x] T002 `process_path` in jtb-win, fill exe for tasks (todo #3)
 - [x] T003 Accordion rendering: header and child buttons, aggregate marks (todo #3)
-- [x] T004 Mouse action table, header launch, middle click fold, fold state (todo #3)
+- [x] T004 Mouse action table, header click fold, middle click launch, fold state (todo #3)
 - [x] T005 `grouping.mode` and `mouse` config keys (todo #3)
 - [x] T006 Custom groups from config (todo #4)
 - [x] T007 Pins from config, exe icons, launch (todo #6)

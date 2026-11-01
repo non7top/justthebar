@@ -8,19 +8,19 @@
 
 ### US1 - Windows of one app collapse into an accordion (P1)
 
-Windows of the same application (same executable) share one group. A group of two or more windows shows a header button and the member windows as child buttons under it. Clicking the header launches a new instance of the app. Middle click on the header folds or unfolds the group. A group of one window, with no pin, is a plain task button.
+Windows of the same application (same executable) share one group. A group of two or more windows shows a header button and the member windows as child buttons under it. Clicking the header folds or unfolds the group (a pin with no windows launches instead). Middle click on the header launches a new instance of the app. A group of one window, with no pin, is a plain task button.
 
-**Independent test**: open three Notepad windows; the bar shows one header "notepad (3)" and three children. Middle click folds them; the header keeps the flash, title-change and active marks of its windows.
+**Independent test**: open three Notepad windows; the bar shows one header "notepad (3)" and three children. A click on the header folds them; the header keeps the flash, title-change and active marks of its windows.
 
 **Acceptance**:
 1. Given 3 windows of one exe, when the bar draws, then one header and 3 children are shown, in window order.
 2. Given a folded group, when a member window flashes, then the header shows the flash color.
-3. Given the header, when it is left clicked, then a new instance of the exe starts.
-4. Given the header, when it is middle clicked, then the group folds, and unfolds on the next middle click.
+3. Given the header, when it is middle clicked, then a new instance of the exe starts.
+4. Given the header, when it is left clicked, then the group folds, and unfolds on the next click.
 
 ### US2 - Pins launch apps and own their group (P2)
 
-A pin is a header that exists without windows. Clicking it launches the app; windows of that app then group under the pin. Pins come from the config, and from dropping an app onto the bar.
+A pin is a header that exists without windows. Middle clicking it launches the app (a plain click launches too while it has no windows); windows of that app then group under the pin. Pins come from the config, and from dropping an app onto the bar.
 
 **Independent test**: with a pin for Notepad and no Notepad open, the bar shows the pin, a click starts Notepad, and its window appears under the pin.
 
@@ -32,7 +32,7 @@ The config can define named groups of executables. Windows of any listed exe for
 
 ### US4 - Drag and drop (P3)
 
-Dragging a task button, header or pin moves it to another position on the bar. Dropping an exe or a shortcut from Explorer onto the bar pins it. A pin can be removed from the header's context menu.
+Dragging a task button, header or pin moves it to another position on the bar. Dropping an exe or a shortcut from Explorer onto the bar pins it. Any pin, from the config or added from the bar, can be removed from the header's context menu; a config pin is hidden through `jtb.state.json`, so `jtb.json` stays untouched.
 
 **Independent test**: drag the second header before the first; the order stays after a restart.
 

@@ -167,8 +167,8 @@ pub struct MouseConfig {
 impl Default for MouseConfig {
     fn default() -> Self {
         MouseConfig {
-            header_left: Action::Launch,
-            header_middle: Action::ToggleFold,
+            header_left: Action::ToggleFold,
+            header_middle: Action::Launch,
             window_left: Action::Activate,
             window_middle: Action::None,
         }
@@ -324,11 +324,11 @@ mod tests {
         let defaults = MouseConfig::default();
         assert_eq!(
             defaults.action(Target::Header, Button::Left),
-            Action::Launch
+            Action::ToggleFold
         );
         assert_eq!(
             defaults.action(Target::Header, Button::Middle),
-            Action::ToggleFold
+            Action::Launch
         );
         let config =
             Config::parse(r#"{"mouse": {"header_left": "activate", "window_middle": "launch"}}"#)
