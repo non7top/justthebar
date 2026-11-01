@@ -130,6 +130,62 @@ pub struct GroupConfig {
     pub exes: Vec<String>,
 }
 
+/// What a click does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Action {
+    /// Bring the window forward, minimize it if active; on a header, the group's first window.
+    Activate,
+    /// Start the app (pin or executable of the clicked button).
+    Launch,
+    /// Fold or unfold the clicked button's group.
+    ToggleFold,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    Left,
+    Middle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Window,
+    Header,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MouseConfig {
+    pub header_left: Action,
+    pub header_middle: Action,
+    pub window_left: Action,
+    pub window_middle: Action,
+}
+
+impl Default for MouseConfig {
+    fn default() -> Self {
+        MouseConfig {
+            header_left: Action::Launch,
+            header_middle: Action::ToggleFold,
+            window_left: Action::Activate,
+            window_middle: Action::None,
+        }
+    }
+}
+
+impl MouseConfig {
+    pub fn action(&self, target: Target, button: Button) -> Action {
+        match (target, button) {
+            (Target::Header, Button::Left) => self.header_left,
+            (Target::Header, Button::Middle) => self.header_middle,
+            (Target::Window, Button::Left) => self.window_left,
+            (Target::Window, Button::Middle) => self.window_middle,
+        }
+    }
+}
+
 /// The only config file version this build understands.
 pub const CONFIG_VERSION: u32 = 1;
 
@@ -142,6 +198,7 @@ pub struct Config {
     pub appearance: Appearance,
     pub tasks: TasksConfig,
     pub grouping: GroupingConfig,
+    pub mouse: MouseConfig,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
 }
@@ -155,6 +212,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             tasks: TasksConfig::default(),
             grouping: GroupingConfig::default(),
+            mouse: MouseConfig::default(),
             pins: Vec::new(),
             groups: Vec::new(),
         }
@@ -227,6 +285,7 @@ mod tests {
         assert_eq!(config.appearance, Appearance::default());
         assert_eq!(config.tasks, TasksConfig::default());
         assert_eq!(config.grouping, GroupingConfig::default());
+        assert_eq!(config.mouse, MouseConfig::default());
     }
 
     #[test]
@@ -248,6 +307,26 @@ mod tests {
         );
         assert_eq!(config.pins[0].args.len(), 2);
         assert_eq!(config.groups[0].exes.len(), 2);
+    }
+
+    #[test]
+    fn mouse_actions_default_and_override() {
+        let defaults = MouseConfig::default();
+        assert_eq!(
+            defaults.action(Target::Header, Button::Left),
+            Action::Launch
+        );
+        assert_eq!(
+            defaults.action(Target::Header, Button::Middle),
+            Action::ToggleFold
+        );
+        let config =
+            Config::parse(r#"{"mouse": {"header_left": "activate", "window_middle": "launch"}}"#)
+                .unwrap();
+        assert_eq!(config.mouse.header_left, Action::Activate);
+        assert_eq!(config.mouse.window_middle, Action::Launch);
+        assert_eq!(config.mouse.window_left, Action::Activate);
+        assert!(Config::parse(r#"{"mouse": {"header_left": "explode"}}"#).is_err());
     }
 
     #[test]
