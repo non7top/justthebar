@@ -3,9 +3,16 @@ ARTIFACTS := dist/artifacts
 
 DEPLOY_DIR := /mnt/d/tmp/jtb
 
-.PHONY: build deploy
+.PHONY: build deploy fmt fmt-image
 build:
 	act pull_request -W .github/workflows/build.yml -P ubuntu-latest=$(ACT_IMAGE) --artifact-server-path $(ARTIFACTS)
+
+# Formats the workspace in a throwaway container, as the invoking user.
+fmt-image:
+	docker build -q -t jtb-fmt -f tools/fmt.Dockerfile tools
+
+fmt: fmt-image
+	docker run --rm --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/w -w /w jtb-fmt cargo fmt --all
 
 # Copies the built exe to D:\tmp\jtb; it is launched by hand on Windows.
 deploy:
