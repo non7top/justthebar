@@ -3,5 +3,11 @@
   "bars": [
     { "monitor": 0, "edge": "right", "size": 200 },
     { "monitor": 1, "edge": "left", "size": 120 }
+  ],
+  "pins": [
+    { "name": "Notepad", "path": "C:\\Windows\\notepad.exe" }
+  ],
+  "groups": [
+    { "name": "PuTTY", "exes": ["putty.exe", "puttyportable.exe"] }
   ]
 }
