@@ -19,7 +19,7 @@ use jtb_core::tasks::{Task, Tasks};
 use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons};
 use jtb_core::traypacket;
 use jtb_core::Edge;
-use jtb_win::{explorer, monitors, shell, tasks, tray};
+use jtb_win::{explorer, monitors, shell, startmenu, tasks, tray};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -62,6 +62,8 @@ thread_local! {
     static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
     static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
     static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
+    /// Where the Start button was clicked, in screen coordinates, until the menu is toggled.
+    static START_RECT: Cell<Option<RECT>> = const { Cell::new(None) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -540,11 +542,22 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
     (view, Click::Start)
 }
 
+/// Remembers where the Start button the user just clicked is, for `run_start`.
+pub fn note_start_rect(rect: RECT) {
+    START_RECT.set(Some(rect));
+}
+
 fn run_start(config: &StartConfig) {
     log(&format!(
         "start button: {} {:?}",
         config.command, config.args
     ));
+    if let Some(rect) = START_RECT.take() {
+        let moved = startmenu::move_button(rect);
+        log(&format!(
+            "start: Open-Shell button asked to move to {rect:?}, now at {moved:?}"
+        ));
+    }
     launch_app(&config.command, &config.args);
 }
 

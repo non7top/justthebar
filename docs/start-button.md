@@ -21,9 +21,11 @@ In `jtb.json`:
 
 Every key but `enabled` is optional and the values above are the defaults.
 
-Known limit: Open-Shell places its menu from the position of Explorer's taskbar, which is hidden at
-the bottom-left, so the menu opens there and not next to the button. The "Align start menu to
-working area" setting does not change this.
+Menu position: Open-Shell opens its menu next to its own button, a popup window owned by
+Explorer's hidden taskbar. On a click the bar moves that button under its Start button, then runs
+the command. The log line `start: Open-Shell button asked to move to ..., now at ...` shows where
+the button ended up. Which side of the button the menu grows to still follows the edge of
+Explorer's taskbar (the bottom), so on a side bar the menu can overlap the bar.
 
 ## Look
 

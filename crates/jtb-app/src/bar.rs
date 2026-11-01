@@ -385,6 +385,23 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
     )
 }
 
+/// Tells the app where the Start button is on screen, so the menu can be opened next to it.
+fn note_start_rect(hwnd: HWND, bar: AppBar) {
+    let Some(rect) = layout_of(hwnd, bar).rows.first().copied() else {
+        return;
+    };
+    let mut origin = POINT { x: 0, y: 0 };
+    unsafe {
+        let _ = ClientToScreen(hwnd, &mut origin);
+    }
+    crate::note_start_rect(RECT {
+        left: origin.x + rect.left as i32,
+        top: origin.y + rect.top as i32,
+        right: origin.x + rect.right as i32,
+        bottom: origin.y + rect.bottom as i32,
+    });
+}
+
 fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
     let (x, y) = point_of(lparam);
     let (x, y) = (x as f32, y as f32);
@@ -574,6 +591,9 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                             }
                         }
                         Some((from, _, _)) if Some(from) == target => {
+                            if from == 0 && crate::start_enabled() {
+                                note_start_rect(hwnd, bar);
+                            }
                             crate::click_row(monitor, from, Button::Left);
                         }
                         _ => {}

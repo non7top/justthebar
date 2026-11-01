@@ -1,0 +1,40 @@
+//! Open-Shell opens its menu next to its own button, a popup window owned by Explorer's taskbar.
+//! With that taskbar hidden the button sits at the bottom-left, so the menu would open there;
+//! moving the button under our Start button just before the toggle makes the menu follow it.
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowExW, GetWindow, GetWindowRect, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
+};
+
+/// Moves Open-Shell's button of the main taskbar to `to` (screen coordinates). Returns where the
+/// button ended up, or `None` when there is no such button.
+pub fn move_button(to: RECT) -> Option<RECT> {
+    let owner = crate::tray::explorer_tray()?;
+    let mut after: Option<HWND> = None;
+    let mut result = None;
+    while let Ok(button) =
+        unsafe { FindWindowExW(None, after, w!("OpenShell.CStartButton"), PCWSTR::null()) }
+    {
+        after = Some(button);
+        if unsafe { GetWindow(button, GW_OWNER) }.ok() != Some(owner) {
+            continue;
+        }
+        unsafe {
+            let _ = SetWindowPos(
+                button,
+                None,
+                to.left,
+                to.top,
+                to.right - to.left,
+                to.bottom - to.top,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            );
+            let mut now = RECT::default();
+            if GetWindowRect(button, &mut now).is_ok() {
+                result = Some(now);
+            }
+        }
+    }
+    result
+}
