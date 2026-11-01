@@ -46,6 +46,7 @@ pub struct Fill {
 pub struct ButtonView {
     pub title: String,
     pub active: bool,
+    pub hovered: bool,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -95,15 +96,15 @@ pub fn build_scene(
     {
         fills.push(Fill {
             rect,
-            color: if button.active {
-                Color {
+            color: match (button.active, button.hovered) {
+                (true, hovered) => Color {
                     r: 0.25,
                     g: 0.55,
                     b: 1.0,
-                    a: 0.75,
-                }
-            } else {
-                Color { a: 0.10, ..white }
+                    a: if hovered { 0.90 } else { 0.75 },
+                },
+                (false, true) => Color { a: 0.22, ..white },
+                (false, false) => Color { a: 0.10, ..white },
             },
         });
         if let Some(icon) = &button.icon {
@@ -161,11 +162,13 @@ mod tests {
             ButtonView {
                 title: "one".into(),
                 active: false,
+                hovered: false,
                 icon: None,
             },
             ButtonView {
                 title: "two".into(),
                 active: true,
+                hovered: true,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -179,6 +182,14 @@ mod tests {
         assert_eq!(scene.labels.len(), 3);
         assert!(scene.fills[1].color.a > scene.fills[0].color.a);
         assert_eq!(scene.icons.len(), 1);
+        let plain = ButtonView {
+            title: "two".into(),
+            active: true,
+            hovered: false,
+            icon: None,
+        };
+        let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
+        assert!(scene.fills[1].color.a > calm.fills[0].color.a);
         assert!(scene.labels[1].leading);
         assert!(!scene.labels[0].leading);
     }

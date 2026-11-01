@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use jtb_core::buttons::{hit_test, layout_buttons};
 use jtb_core::config::BarConfig;
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
-use jtb_core::scene::{build_scene, Color};
+use jtb_core::scene::{build_scene, ButtonView, Color};
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
@@ -12,22 +12,27 @@ use windows::Win32::Graphics::Gdi::{InvalidateRect, ValidateRect};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, RegisterClassW,
     SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_PAINT, WM_SIZE,
-    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEMOVE,
+    WM_PAINT, WM_SIZE, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
 
 const VK_ESCAPE: usize = 0x1B;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 const BAR_COLOR: Color = Color::rgb(0.09, 0.10, 0.12);
 
 struct BarWindow {
     hwnd: HWND,
     bar: AppBar,
     monitor: RECT,
+    /// Button under the mouse, and whether a `WM_MOUSELEAVE` is already requested.
+    hover: Option<usize>,
+    tracking: bool,
     renderer: Option<D2dRenderer>,
 }
 
@@ -111,6 +116,8 @@ pub fn build(planned: Vec<Planned>, flush: bool) {
                 hwnd,
                 bar,
                 monitor: plan.monitor_rect,
+                hover: None,
+                tracking: false,
                 renderer,
             })
         });
@@ -231,6 +238,7 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let time = unsafe { GetLocalTime() };
+    let hover = BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).and_then(|b| b.hover));
     let scene = build_scene(
         bar.edge(),
         width as f32,
@@ -240,22 +248,59 @@ fn paint(hwnd: HWND, bar: AppBar) {
         (time.wHour, time.wMinute),
         &crate::bar_tasks(monitor_of(hwnd))
             .into_iter()
-            .map(|(_, view)| view)
+            .enumerate()
+            .map(|(i, (_, view))| ButtonView {
+                hovered: hover == Some(i),
+                ..view
+            })
             .collect::<Vec<_>>(),
     );
     with_renderer(hwnd, |r| r.draw(&scene));
 }
 
-fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM) {
+fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
     let x = (lparam.0 & 0xFFFF) as i16 as f32;
     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let monitor = monitor_of(hwnd);
-    let count = crate::bar_tasks(monitor).len();
+    let count = crate::bar_tasks(monitor_of(hwnd)).len();
     let rects = layout_buttons(bar.edge(), width as f32, height as f32, scale, count);
-    if let Some(index) = hit_test(&rects, x, y) {
-        crate::click_task(monitor, index);
+    hit_test(&rects, x, y)
+}
+
+fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM) {
+    if let Some(index) = button_at(hwnd, bar, lparam) {
+        crate::click_task(monitor_of(hwnd), index);
+    }
+}
+
+/// Moves the hover highlight, and asks for `WM_MOUSELEAVE` once per entry into the window.
+fn hover_to(hwnd: HWND, hover: Option<usize>) {
+    let (changed, start_tracking) = BARS.with_borrow_mut(|bars| {
+        let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
+            return (false, false);
+        };
+        let start = hover.is_some() && !bar.tracking;
+        bar.tracking |= start;
+        let changed = bar.hover != hover;
+        bar.hover = hover;
+        (changed, start)
+    });
+    if start_tracking {
+        let mut track = TRACKMOUSEEVENT {
+            cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: hwnd,
+            dwHoverTime: 0,
+        };
+        unsafe {
+            let _ = TrackMouseEvent(&mut track);
+        }
+    }
+    if changed {
+        unsafe {
+            let _ = InvalidateRect(Some(hwnd), None, false);
+        }
     }
 }
 
@@ -285,6 +330,21 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 if let Some(bar) = bar {
                     click(hwnd, bar, lparam);
                 }
+                LRESULT(0)
+            }
+            WM_MOUSEMOVE => {
+                if let Some(bar) = bar {
+                    hover_to(hwnd, button_at(hwnd, bar, lparam));
+                }
+                LRESULT(0)
+            }
+            WM_MOUSELEAVE => {
+                BARS.with_borrow_mut(|bars| {
+                    if let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) {
+                        bar.tracking = false;
+                    }
+                });
+                hover_to(hwnd, None);
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
