@@ -1,50 +1,38 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# justthebar Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Logic stays out of Win32
+`jtb-core` holds every decision (task model, grouping, layout, config, scene) and never imports `windows`. `jtb-win` talks to the system, `jtb-ui` draws a `Scene`, `jtb-app` wires them. New behavior is written and unit-tested in `jtb-core` first.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Explorer is always given back
+The Explorer taskbar is hidden only while the app runs, and restored on exit, on panic, and by `--restore-explorer`. Nothing may make that harder. Placement and restore changes are logged.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Config is a contract
+`jtb.json` is versioned, every key has a default, typos are rejected, and a broken edit keeps the last good config. Features that are not built yet may reserve keys, but a reserved key never changes meaning later.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Derived code is credited
+Logic ported from Cairo Desktop's ManagedShell (Apache-2.0) is marked in the file header and listed in `NOTICE`. The project is Apache-2.0.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Small and observable
+No feature flags or abstractions for cases that do not exist yet. Behavior that depends on the live system (shell hook, z-order, work area) writes a line to `jtb.log` when it changes.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Constraints
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- Windows 10 and 11 desktop, Explorer keeps running, Open-Shell owns Start. Tray and shell mode come later.
+- Native Win32 and Direct2D behind the `Renderer` trait.
+- Per-monitor v2 DPI: scene coordinates are physical pixels, sizes in config are at 96 dpi.
+- Builds and checks run in disposable containers (`make build` runs the CI workflow with `act`: fmt check, clippy with warnings denied, `jtb-core` tests, release cross-build).
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+## Workflow
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+- Commits are atomic: one change, only its files, staged by path, semantic prefix (`feat:`, `fix:`, `chore:`, `docs:`).
+- Lint and the CI workflow pass before a change is committed or deployed.
+- The exe is deployed to `D:\tmp\jtb` for manual runs; WSL cannot launch Windows programs, so Windows behavior is verified by the user and reported back.
+- Features larger than one commit get a spec, plan and task list under `specs/`.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution wins over habit. Changes to it are their own commit with the reason in the message.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-10-31 | **Last Amended**: 2026-10-31
