@@ -1,6 +1,6 @@
 # Research: Open-Shell coexistence and tray
 
-Sources: Open-Shell-Menu master branch (`Src/StartMenu/StartMenuDLL/StartButton.cpp`, `StartMenuDLL.cpp`, `Src/StartMenu/StartMenu.cpp`), Cairo ManagedShell `TrayService.cs`. Copies were read from the raw files on GitHub; the installed Open-Shell version on this machine was not compared with master.
+Sources: Open-Shell-Menu (`Src/StartMenu/StartMenuDLL/StartButton.cpp`, `StartMenuDLL.cpp`, `Src/StartMenu/StartMenu.cpp`), read from the raw files on GitHub on master and at tag `v4.4.198`, the version installed on this machine (file version string in `StartMenu.exe` and `StartMenuDLL.dll`). The auto-hide hiding code and the `-toggle`/`-open` handling are the same at that tag. The installed binaries contain the strings `Shell_TrayWnd`, `OpenShellMenu.StartMenuMsg`, `-toggle`, `-togglenew`, `-open`. Plus Cairo ManagedShell `TrayService.cs`.
 
 ## R1: Where does Open-Shell's Start button live?
 
