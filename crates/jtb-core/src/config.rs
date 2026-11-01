@@ -228,6 +228,16 @@ impl Config {
                 config.version
             ));
         }
+        for group in &config.groups {
+            if group.name.trim().is_empty() || group.exes.is_empty() {
+                return Err("every group needs a name and at least one exe".to_string());
+            }
+        }
+        for pin in &config.pins {
+            if pin.path.trim().is_empty() {
+                return Err("every pin needs a path".to_string());
+            }
+        }
         for bar in &config.bars {
             if bar.size == 0 || bar.size > 1000 {
                 return Err(format!("bar size must be 1..1000, got {}", bar.size));
@@ -332,6 +342,9 @@ mod tests {
     #[test]
     fn rejects_bad_input() {
         assert!(Config::parse(r#"{"version": 2}"#).is_err());
+        assert!(Config::parse(r#"{"groups": [{"name": "x"}]}"#).is_err());
+        assert!(Config::parse(r#"{"groups": [{"exes": ["a.exe"]}]}"#).is_err());
+        assert!(Config::parse(r#"{"pins": [{"name": "x"}]}"#).is_err());
         assert!(Config::parse(r##"{"appearance": {"bar_color": "red"}}"##).is_err());
         assert!(Config::parse(r#"{"grouping": {"mode": "stack"}}"#).is_err());
         assert!(Config::parse(r#"{"tasks": {"permonitor": true}}"#).is_err());
