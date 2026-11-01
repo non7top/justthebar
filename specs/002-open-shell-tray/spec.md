@@ -7,20 +7,21 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Start button and Win key keep working next to the bar (Priority: P1)
+### User Story 1 - A Start button on the bar opens the Open-Shell menu (Priority: P1)
 
-The user runs Open-Shell for the Start menu. With the bar running and the Explorer taskbar hidden, the Start button stays reachable and clickable, the Win key opens the Start menu, and the bar never covers the button. A configurable inset leaves room at the start edge of a bar.
+The user runs Open-Shell for the Start menu. Open-Shell's own button follows the Explorer taskbar and hides with it while that taskbar is auto-hidden, so the bar shows its own Start button. Clicking it opens the Open-Shell menu; the Win key keeps working.
 
-**Why this priority**: Start is how the user launches everything. A bar that hides or breaks Start is unusable as a daily taskbar, and it needs no tray work.
+**Why this priority**: Start is how the user launches everything, and without a visible button the user depends on the Win key alone. It needs no tray work.
 
-**Independent Test**: Run the app with Open-Shell installed. Click the Start button, press the Win key, then set the inset in `jtb.json` and see the buttons move away from the edge.
+**Independent Test**: Run the app with Open-Shell installed and the Start button enabled in `jtb.json`. Click the Start button, then press the Win key.
 
 **Acceptance Scenarios**:
 
 1. **Given** the bar is running with the Explorer taskbar hidden, **When** the user presses the Win key, **Then** the Open-Shell Start menu opens.
-2. **Given** a bar with `start_inset` set to 48 (at 96 dpi), **When** the bar draws, **Then** task buttons begin 48 px from the start edge and nothing of ours is drawn in that gap.
-3. **Given** the inset is changed in `jtb.json` while the app runs, **When** the file is saved, **Then** the layout updates without a restart.
-4. **Given** the user clicks the Start button, **When** the menu is open, **Then** the bar stays visible and its task buttons still respond.
+2. **Given** `start.enabled` is true, **When** the bar draws, **Then** a Start button is the first button at the start edge of each bar with task buttons.
+3. **Given** the Start button, **When** the user clicks it, **Then** the Open-Shell menu opens, and clicking again closes it.
+4. **Given** the command in `jtb.json` is wrong, **When** the user clicks, **Then** nothing breaks and the failure is in `jtb.log`.
+5. **Given** the config changes while the app runs, **When** the file is saved, **Then** the button appears or disappears without a restart.
 
 ---
 
@@ -88,8 +89,8 @@ Taking over the tray must never leave the desktop without a working taskbar: on 
 
 ### Functional Requirements
 
-- **FR-001**: Each bar MUST support an inset at its start edge, in pixels at 96 dpi, default 0, applied live from `jtb.json`.
-- **FR-002**: The bar MUST NOT draw over, activate, or steal focus from the Open-Shell Start button, and the Win key MUST keep opening the Start menu while the bar runs.
+- **FR-001**: Each bar with task buttons MUST be able to show a Start button that runs a configurable command (default: Open-Shell's `StartMenu.exe -toggle`), switched and applied live from `jtb.json`.
+- **FR-002**: Running the bar MUST NOT stop the Win key from opening the Start menu, and a failing Start command MUST NOT affect the bar.
 - **FR-003**: The app MUST host a tray area on exactly one configured bar and show each notification icon (image, tooltip) added by other apps.
 - **FR-004**: The tray MUST follow icon add, modify and delete from apps, and MUST show icons of apps that were already running at start.
 - **FR-005**: Clicks on a tray icon MUST be delivered to the owning app so it can act (window, menu, balloon).
@@ -102,7 +103,7 @@ Taking over the tray must never leave the desktop without a working taskbar: on 
 
 - **Tray icon**: owner window, icon id, image, tooltip, state (visible, removed), the time it was last seen alive.
 - **Tray host**: the bar and area that shows icons, and the record of who currently owns the taskbar role.
-- **Start inset**: per bar distance reserved at the start edge.
+- **Start button**: a button at the start edge of a bar with a label and the command it runs.
 
 ## Success Criteria *(mandatory)*
 
@@ -116,7 +117,7 @@ Taking over the tray must never leave the desktop without a working taskbar: on 
 
 ## Assumptions
 
-- Open-Shell stays in charge of Start and its button; this app never hosts or replaces it. How Open-Shell places its button when the Explorer taskbar is hidden has not been checked on this machine and is the first thing to verify.
+- Open-Shell stays in charge of the Start menu. Its own button hides with the auto-hidden Explorer taskbar (read in Open-Shell's source, see research.md), so the bar draws a button that asks Open-Shell to open its menu. Where the menu opens with the Explorer taskbar hidden has not been checked on this machine.
 - Taking the tray role works with Explorer running: the app owns a taskbar window that apps find, and forwards what it does not handle to Explorer. This follows the approach of Cairo Desktop's ManagedShell and has not been tried with this app on Windows.
 - Windows system icons (volume, network, battery, input language) and their flyouts are handled by Explorer through private interfaces. Whether they appear on our bar is not promised; if they do not, they stay reachable through Explorer's own taskbar until a later feature.
 - The clock already on the bar stays as it is; flyouts for it are out of scope.
