@@ -19,6 +19,13 @@
     "window_left": "activate",
     "window_middle": "none"
   },
+  "start": {
+    "enabled": false,
+    "command": "C:\\Program Files\\Open-Shell\\StartMenu.exe",
+    "args": ["-toggle"],
+    "label": "Start",
+    "image": "start-button.png"
+  },
   "pins": [],
   "groups": []
 }

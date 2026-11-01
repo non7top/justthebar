@@ -130,6 +130,31 @@ pub struct GroupConfig {
     pub exes: Vec<String>,
 }
 
+/// The Start button, drawn by the bar; a click runs `command`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StartConfig {
+    pub enabled: bool,
+    pub command: String,
+    pub args: Vec<String>,
+    pub label: String,
+    /// Button art in Open-Shell's strip format, relative to the exe folder; a missing file gives
+    /// the drawn button.
+    pub image: String,
+}
+
+impl Default for StartConfig {
+    fn default() -> Self {
+        StartConfig {
+            enabled: false,
+            command: r"C:\Program Files\Open-Shell\StartMenu.exe".to_string(),
+            args: vec!["-toggle".to_string()],
+            label: "Start".to_string(),
+            image: "start-button.png".to_string(),
+        }
+    }
+}
+
 /// What a click does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -199,6 +224,7 @@ pub struct Config {
     pub tasks: TasksConfig,
     pub grouping: GroupingConfig,
     pub mouse: MouseConfig,
+    pub start: StartConfig,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
 }
@@ -213,6 +239,7 @@ impl Default for Config {
             tasks: TasksConfig::default(),
             grouping: GroupingConfig::default(),
             mouse: MouseConfig::default(),
+            start: StartConfig::default(),
             pins: Vec::new(),
             groups: Vec::new(),
         }
@@ -237,6 +264,9 @@ impl Config {
             if pin.path.trim().is_empty() {
                 return Err("every pin needs a path".to_string());
             }
+        }
+        if config.start.enabled && config.start.command.trim().is_empty() {
+            return Err("the start button needs a command".to_string());
         }
         for bar in &config.bars {
             if bar.size == 0 || bar.size > 1000 {
@@ -293,6 +323,7 @@ mod tests {
         let config = Config::parse(example).unwrap();
         assert_eq!(config.version, CONFIG_VERSION);
         assert_eq!(config.appearance, Appearance::default());
+        assert_eq!(config.start, StartConfig::default());
         assert_eq!(config.tasks, TasksConfig::default());
         assert_eq!(config.grouping, GroupingConfig::default());
         assert_eq!(config.mouse, MouseConfig::default());
@@ -337,6 +368,21 @@ mod tests {
         assert_eq!(config.mouse.window_middle, Action::Launch);
         assert_eq!(config.mouse.window_left, Action::Activate);
         assert!(Config::parse(r#"{"mouse": {"header_left": "explode"}}"#).is_err());
+    }
+
+    #[test]
+    fn start_button_defaults_and_validation() {
+        let defaults = Config::parse("{}").unwrap().start;
+        assert!(!defaults.enabled);
+        assert_eq!(defaults.args, vec!["-toggle".to_string()]);
+        let config =
+            Config::parse(r#"{"start": {"enabled": true, "label": "Go", "image": ""}}"#).unwrap();
+        assert!(config.start.enabled);
+        assert_eq!(config.start.label, "Go");
+        assert_eq!(config.start.command, StartConfig::default().command);
+        assert!(Config::parse(r#"{"start": {"enabled": true, "command": " "}}"#).is_err());
+        assert!(Config::parse(r#"{"start": {"enabled": false, "command": ""}}"#).is_ok());
+        assert!(Config::parse(r#"{"start": {"colour": "red"}}"#).is_err());
     }
 
     #[test]
