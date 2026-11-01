@@ -47,6 +47,8 @@ pub struct ButtonView {
     pub title: String,
     pub active: bool,
     pub hovered: bool,
+    /// Folded down to the taskbar; drawn dimmed.
+    pub minimized: bool,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -55,6 +57,7 @@ pub struct ButtonView {
 pub struct IconDraw {
     pub rect: Rect,
     pub icon: Arc<Icon>,
+    pub opacity: f32,
 }
 
 /// Everything a renderer needs to draw one frame, in physical pixels.
@@ -66,6 +69,9 @@ pub struct Scene {
     pub icons: Vec<IconDraw>,
     pub labels: Vec<Label>,
 }
+
+/// How faint a minimized window's icon and title are drawn.
+const MINIMIZED_OPACITY: f32 = 0.5;
 
 pub fn clock_text(hour: u16, minute: u16) -> String {
     format!("{hour:02}:{minute:02}")
@@ -107,10 +113,16 @@ pub fn build_scene(
                 (false, false) => Color { a: 0.10, ..white },
             },
         });
+        let opacity = if button.minimized {
+            MINIMIZED_OPACITY
+        } else {
+            1.0
+        };
         if let Some(icon) = &button.icon {
             icons.push(IconDraw {
                 rect: icon_rect(rect, scale),
                 icon: Arc::clone(icon),
+                opacity,
             });
         }
         let left = title_left(rect, scale).min(rect.right);
@@ -121,7 +133,10 @@ pub fn build_scene(
                 ..rect
             },
             text: button.title.clone(),
-            color: white,
+            color: Color {
+                a: opacity,
+                ..white
+            },
             leading: true,
         });
     }
@@ -163,12 +178,14 @@ mod tests {
                 title: "one".into(),
                 active: false,
                 hovered: false,
+                minimized: false,
                 icon: None,
             },
             ButtonView {
                 title: "two".into(),
                 active: true,
                 hovered: true,
+                minimized: false,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -186,10 +203,12 @@ mod tests {
             title: "two".into(),
             active: true,
             hovered: false,
+            minimized: true,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
         assert!(scene.fills[1].color.a > calm.fills[0].color.a);
+        assert!(calm.labels[1].color.a < scene.labels[2].color.a);
         assert!(scene.labels[1].leading);
         assert!(!scene.labels[0].leading);
     }

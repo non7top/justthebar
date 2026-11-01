@@ -160,7 +160,7 @@ impl Renderer for D2dRenderer {
                     self.target.DrawBitmap(
                         bitmap,
                         Some(&rect(draw.rect)),
-                        1.0,
+                        draw.opacity,
                         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                         None,
                     );

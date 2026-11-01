@@ -109,6 +109,10 @@ pub fn enumerate() -> Vec<Task> {
     list
 }
 
+pub fn is_minimized(id: isize) -> bool {
+    unsafe { IsIconic(hwnd_of(id)) }.as_bool()
+}
+
 pub fn foreground() -> Option<isize> {
     let hwnd = unsafe { GetForegroundWindow() };
     (!hwnd.is_invalid()).then_some(hwnd.0 as isize)
