@@ -16,20 +16,21 @@ use jtb_core::scene::{ButtonView, Drag, StartView, TrayView};
 use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
-use jtb_core::tray::TrayIcons;
+use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons};
 use jtb_core::traypacket;
 use jtb_core::Edge;
 use jtb_win::{explorer, monitors, shell, tasks, tray};
 use windows::core::{w, Result};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, KillTimer, PostQuitMessage,
-    RegisterClassW, SetTimer, TranslateMessage, MSG, WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW, KillTimer,
+    PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, MSG, WM_DISPLAYCHANGE, WM_TIMER,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 const TIMER_HIDE_EXPLORER: usize = 1;
@@ -60,6 +61,7 @@ thread_local! {
     static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
     static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
     static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
+    static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -272,6 +274,75 @@ pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
             })
             .collect()
     })
+}
+
+/// The icon drawn in cell `at` of the notification area (the cells follow `tray_views`).
+fn tray_icon_at(at: usize) -> Option<TrayIcon> {
+    TRAY_ICONS.with_borrow(|icons| {
+        icons
+            .visible()
+            .filter(|i| i.icon.is_some())
+            .nth(at)
+            .cloned()
+    })
+}
+
+/// The cursor in screen coordinates as the callback messages carry it: x low, y high.
+fn cursor_word() -> u32 {
+    let mut at = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut at);
+    }
+    (at.x as u16 as u32) | ((at.y as u16 as u32) << 16)
+}
+
+/// Passes a mouse event on an icon to the app that owns it.
+pub fn tray_mouse(at: usize, event: Mouse) {
+    let Some(icon) = tray_icon_at(at) else { return };
+    let owner = icon.key.owner;
+    if icon.callback_message == 0 || !tray::owner_alive(owner) {
+        return;
+    }
+    if matches!(event, Mouse::Down { .. }) {
+        tray::allow_foreground(owner);
+    }
+    let mouse = cursor_word();
+    for message in icon.mouse_messages(event) {
+        let (wparam, lparam) = icon.callback_params(message, mouse);
+        if !tray::notify_owner(owner, icon.callback_message, wparam, lparam) {
+            log(&format!(
+                "tray: owner {owner:#x} did not take message {message:#x}"
+            ));
+        }
+    }
+}
+
+/// A button press on an icon; two presses within the double click time make a double click.
+pub fn tray_press(at: usize, side: Side) {
+    let slot = side as usize;
+    let now = std::time::Instant::now();
+    let limit = std::time::Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
+    let mut last = LAST_PRESS.get();
+    let double = last[slot].is_some_and(|t| now.duration_since(t) <= limit);
+    last[slot] = if double { None } else { Some(now) };
+    LAST_PRESS.set(last);
+    tray_mouse(at, Mouse::Down { side, double });
+}
+
+/// The pointer moved from icon `before` to icon `now` (either may be none) or within one.
+pub fn tray_hover_events(before: Option<usize>, now: Option<usize>) {
+    if before == now {
+        if let Some(at) = now {
+            tray_mouse(at, Mouse::Move);
+        }
+        return;
+    }
+    if let Some(at) = before {
+        tray_mouse(at, Mouse::Leave);
+    }
+    if let Some(at) = now {
+        tray_mouse(at, Mouse::Enter);
+    }
 }
 
 fn current_settings() -> Option<(Config, bool)> {

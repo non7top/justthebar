@@ -4,6 +4,7 @@ use jtb_core::buttons::{bar_layout, hit_test};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
+use jtb_core::tray::{Mouse, Side};
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
@@ -19,9 +20,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, KillTimer, LoadCursorW,
     RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, MA_NOACTIVATE,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEACTIVATE,
-    WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGED, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
+    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
@@ -440,18 +441,19 @@ fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
 }
 
 /// Moves the hover highlight, and asks for `WM_MOUSELEAVE` once per entry into the window.
-fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) {
-    let (changed, start_tracking, hot_changed) = BARS.with_borrow_mut(|bars| {
+fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) -> Option<usize> {
+    let (changed, start_tracking, hot_changed, before) = BARS.with_borrow_mut(|bars| {
         let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
-            return (false, false, false);
+            return (false, false, false, None);
         };
         let start = (hover.is_some() || tray.is_some()) && !bar.tracking;
         bar.tracking |= start;
         let changed = bar.hover != hover || bar.tray_hover != tray;
         let hot_changed = (bar.hover == Some(0)) != (hover == Some(0));
+        let before = bar.tray_hover;
         bar.hover = hover;
         bar.tray_hover = tray;
-        (changed, start, hot_changed)
+        (changed, start, hot_changed, before)
     });
     // Re-arming the timer on every mouse move would keep it from ever firing.
     if hot_changed && crate::start_enabled() {
@@ -475,6 +477,7 @@ fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) {
             let _ = InvalidateRect(Some(hwnd), None, false);
         }
     }
+    before
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -504,6 +507,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_LBUTTONDOWN => {
                 if let Some(bar) = bar {
+                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        crate::tray_press(at, Side::Left);
+                        return LRESULT(0);
+                    }
                     let index = button_at(hwnd, bar, lparam);
                     let (x, y) = point_of(lparam);
                     set_press(hwnd, index.map(|i| (i, x, y)));
@@ -516,6 +523,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_LBUTTONUP => {
                 let _ = ReleaseCapture();
                 if let Some(bar) = bar {
+                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        crate::tray_mouse(at, Mouse::Up(Side::Left));
+                        return LRESULT(0);
+                    }
                     let (press, dragging) = set_press(hwnd, None);
                     if dragging {
                         let _ = InvalidateRect(Some(hwnd), None, false);
@@ -537,10 +548,30 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 }
                 LRESULT(0)
             }
+            WM_RBUTTONDOWN => {
+                if let Some(bar) = bar {
+                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        crate::tray_press(at, Side::Right);
+                    }
+                }
+                LRESULT(0)
+            }
             WM_RBUTTONUP => {
                 if let Some(bar) = bar {
-                    if let Some(index) = button_at(hwnd, bar, lparam) {
-                        crate::context_menu(task_monitor_of(hwnd), index, hwnd);
+                    match hit_at(hwnd, bar, lparam) {
+                        Hit::Tray(at) => crate::tray_mouse(at, Mouse::Up(Side::Right)),
+                        Hit::Button(index) => {
+                            crate::context_menu(task_monitor_of(hwnd), index, hwnd);
+                        }
+                        Hit::Nothing => {}
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_MBUTTONUP => {
+                if let Some(bar) = bar {
+                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        crate::tray_mouse(at, Mouse::Up(Side::Middle));
                     }
                 }
                 LRESULT(0)
@@ -551,7 +582,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_MBUTTONDOWN => {
                 if let Some(bar) = bar {
-                    click(hwnd, bar, lparam, Button::Middle);
+                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        crate::tray_press(at, Side::Middle);
+                    } else {
+                        click(hwnd, bar, lparam, Button::Middle);
+                    }
                 }
                 LRESULT(0)
             }
@@ -563,7 +598,8 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         Hit::Tray(at) => (None, Some(at)),
                         Hit::Nothing => (None, None),
                     };
-                    hover_to(hwnd, button, tray);
+                    let before = hover_to(hwnd, button, tray);
+                    crate::tray_hover_events(before, tray);
                 }
                 LRESULT(0)
             }
@@ -573,7 +609,8 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         bar.tracking = false;
                     }
                 });
-                hover_to(hwnd, None, None);
+                let before = hover_to(hwnd, None, None);
+                crate::tray_hover_events(before, None);
                 LRESULT(0)
             }
             WM_TIMER if wparam.0 == TIMER_START_FADE => {

@@ -21,6 +21,78 @@ pub struct TrayIcon {
     pub hidden: bool,
 }
 
+const WM_CONTEXTMENU: u32 = 0x007B;
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_MOUSEHOVER: u32 = 0x02A1;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const NIN_SELECT: u32 = 0x0400;
+const NIN_POPUPOPEN: u32 = 0x0406;
+const NIN_POPUPCLOSE: u32 = 0x0407;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Middle,
+    Right,
+}
+
+/// What the mouse did on an icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mouse {
+    Enter,
+    Leave,
+    Move,
+    /// A press; `double` when it came within the double click time of the last one.
+    Down {
+        side: Side,
+        double: bool,
+    },
+    Up(Side),
+}
+
+/// The down, up and double click messages of a button.
+fn button_messages(side: Side) -> (u32, u32, u32) {
+    match side {
+        Side::Left => (0x0201, 0x0202, 0x0203),
+        Side::Right => (0x0204, 0x0205, 0x0206),
+        Side::Middle => (0x0207, 0x0208, 0x0209),
+    }
+}
+
+impl TrayIcon {
+    /// The messages the owner gets for a mouse event, in order. Icons of version 3 and up also
+    /// get the select and context menu notifications that Explorer sends them, and version 4
+    /// icons get the popup open and close ones.
+    pub fn mouse_messages(&self, event: Mouse) -> Vec<u32> {
+        let v3 = self.version >= 3;
+        match event {
+            Mouse::Enter if self.version > 3 => vec![WM_MOUSEHOVER, NIN_POPUPOPEN],
+            Mouse::Enter => vec![WM_MOUSEHOVER],
+            Mouse::Leave if self.version > 3 => vec![WM_MOUSELEAVE, NIN_POPUPCLOSE],
+            Mouse::Leave => vec![WM_MOUSELEAVE],
+            Mouse::Move => vec![WM_MOUSEMOVE],
+            Mouse::Down { side, double } => {
+                let (down, _, dbl) = button_messages(side);
+                vec![if double { dbl } else { down }]
+            }
+            Mouse::Up(Side::Left) if v3 => vec![button_messages(Side::Left).1, NIN_SELECT],
+            Mouse::Up(Side::Right) if v3 => vec![button_messages(Side::Right).1, WM_CONTEXTMENU],
+            Mouse::Up(side) => vec![button_messages(side).1],
+        }
+    }
+
+    /// The `wParam` and `lParam` that carry `message` to the owner. `mouse` is the cursor in
+    /// screen coordinates, x in the low word. Version 4 packs the cursor into `wParam` and the
+    /// icon id into the high word of `lParam`; older icons get the id in `wParam`.
+    pub fn callback_params(&self, message: u32, mouse: u32) -> (usize, isize) {
+        if self.version > 3 {
+            (mouse as usize, (message | (self.key.id << 16)) as isize)
+        } else {
+            (self.key.id as usize, message as isize)
+        }
+    }
+}
+
 /// The fields of one notify packet. `None` means the packet did not carry that field, so the
 /// stored value stays.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,5 +311,56 @@ mod tests {
         assert!(icons.drop_dead(|owner| owner == 1));
         assert_eq!(tooltips(&icons), vec!["one"]);
         assert!(!icons.drop_dead(|owner| owner == 1));
+    }
+
+    fn item(version: u32) -> TrayIcon {
+        TrayIcon {
+            key: key(1, 7),
+            tooltip: String::new(),
+            icon: None,
+            callback_message: 0x401,
+            version,
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn old_icons_get_the_id_in_wparam_and_version_4_packs_the_cursor() {
+        assert_eq!(item(0).callback_params(0x202, 0x0064_00C8), (7, 0x202));
+        assert_eq!(
+            item(4).callback_params(0x202, 0x0064_00C8),
+            (0x0064_00C8, 0x0007_0202)
+        );
+    }
+
+    #[test]
+    fn a_left_click_ends_with_select_on_version_3_and_up() {
+        assert_eq!(item(0).mouse_messages(Mouse::Up(Side::Left)), vec![0x202]);
+        assert_eq!(
+            item(3).mouse_messages(Mouse::Up(Side::Left)),
+            vec![0x202, 0x400]
+        );
+        assert_eq!(
+            item(4).mouse_messages(Mouse::Up(Side::Right)),
+            vec![0x205, 0x7B]
+        );
+        assert_eq!(item(1).mouse_messages(Mouse::Up(Side::Middle)), vec![0x208]);
+    }
+
+    #[test]
+    fn a_press_is_a_double_click_message_when_it_came_quickly() {
+        let down = |side, double| item(0).mouse_messages(Mouse::Down { side, double });
+        assert_eq!(down(Side::Left, false), vec![0x201]);
+        assert_eq!(down(Side::Left, true), vec![0x203]);
+        assert_eq!(down(Side::Right, true), vec![0x206]);
+        assert_eq!(down(Side::Middle, false), vec![0x207]);
+    }
+
+    #[test]
+    fn hover_messages_add_the_popup_pair_on_version_4_only() {
+        assert_eq!(item(3).mouse_messages(Mouse::Enter), vec![0x2A1]);
+        assert_eq!(item(4).mouse_messages(Mouse::Enter), vec![0x2A1, 0x406]);
+        assert_eq!(item(4).mouse_messages(Mouse::Leave), vec![0x2A3, 0x407]);
+        assert_eq!(item(4).mouse_messages(Mouse::Move), vec![0x200]);
     }
 }

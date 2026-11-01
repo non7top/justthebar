@@ -7,13 +7,13 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW, FindWindowW, GetSystemMetrics,
-    GetWindowLongPtrW, IsWindow, PostMessageW, RegisterClassW, RegisterWindowMessageW,
-    SendMessageW, SendNotifyMessageW, SetWindowLongPtrW, SetWindowPos, CS_DBLCLKS, GWL_STYLE,
-    HWND_BOTTOM, HWND_BROADCAST, HWND_TOPMOST, SM_CXSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_SHOWWINDOW, WINDOWPOS, WM_ACTIVATEAPP, WM_COMMAND, WM_COPYDATA, WM_USER,
-    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW,
+    FindWindowW, GetSystemMetrics, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow,
+    PostMessageW, RegisterClassW, RegisterWindowMessageW, SendMessageW, SendNotifyMessageW,
+    SetWindowLongPtrW, SetWindowPos, CS_DBLCLKS, GWL_STYLE, HWND_BOTTOM, HWND_BROADCAST,
+    HWND_TOPMOST, SM_CXSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, WINDOWPOS,
+    WM_ACTIVATEAPP, WM_COMMAND, WM_COPYDATA, WM_USER, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_CHILD,
+    WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 /// The `Shell_TrayWnd` window of this process, 0 when we do not hold the role.
@@ -207,6 +207,35 @@ pub fn create(handler: impl Fn(&[u8]) -> bool + 'static) -> Result<(), String> {
     set_topmost(tray);
     send_taskbar_created();
     Ok(())
+}
+
+/// Whether the window that owns a tray icon still exists.
+pub fn owner_alive(owner: isize) -> bool {
+    unsafe { IsWindow(Some(HWND(owner as *mut _))) }.as_bool()
+}
+
+/// Lets the owner's process take the foreground, so menus it opens close when clicked away.
+pub fn allow_foreground(owner: isize) {
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(HWND(owner as *mut _), Some(&mut pid));
+        if pid != 0 {
+            let _ = AllowSetForegroundWindow(pid);
+        }
+    }
+}
+
+/// Sends an icon's callback message to its owner without waiting for the app to handle it.
+pub fn notify_owner(owner: isize, callback_message: u32, wparam: usize, lparam: isize) -> bool {
+    unsafe {
+        SendNotifyMessageW(
+            HWND(owner as *mut _),
+            callback_message,
+            WPARAM(wparam),
+            LPARAM(lparam),
+        )
+    }
+    .is_ok()
 }
 
 /// Called on a timer: puts our window back on top if another `Shell_TrayWnd` got above it.
