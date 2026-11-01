@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::scene::Color;
 use crate::Edge;
@@ -113,8 +113,8 @@ pub struct GroupingConfig {
     pub mode: GroupingMode,
 }
 
-/// Reserved: an app pinned to the bar. Parsed, not applied yet.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+/// An app pinned to the bar: its header launches it and groups its windows.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PinConfig {
     pub name: String,
@@ -122,7 +122,7 @@ pub struct PinConfig {
     pub args: Vec<String>,
 }
 
-/// Reserved: a user-defined group of executables. Parsed, not applied yet.
+/// A user-defined group of executables whose windows share one header.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GroupConfig {

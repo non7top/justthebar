@@ -4,6 +4,7 @@ pub mod grouping;
 pub mod icon;
 pub mod layout;
 pub mod scene;
+pub mod state;
 pub mod tasks;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
