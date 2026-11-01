@@ -464,13 +464,23 @@ pub fn reorder(monitor: Option<RECT>, from: usize, to: usize) {
     let (Some(source), Some(target)) = (bar.get(from), bar.get(to)) else {
         return;
     };
+    let (from_key, to_key) = (source.1.key().to_string(), target.1.key().to_string());
     if source.0.child {
+        if let (Click::Window { id: from_id, .. }, Click::Window { id: to_id, .. }) =
+            (&source.1, &target.1)
+        {
+            if from_key == to_key && from_id != to_id {
+                log(&format!("window {from_id} moved to window {to_id}"));
+                TASKS.with_borrow_mut(|t| t.move_to(*from_id, *to_id));
+                bar::invalidate_all();
+            }
+        }
         return;
     }
-    let (from_key, to_key) = (source.1.key().to_string(), target.1.key().to_string());
     if from_key == to_key {
         return;
     }
+    log(&format!("group {from_key} moved to {to_key}"));
     let mut sequence: Vec<String> = Vec::new();
     for (_, click) in &bar {
         if !sequence.iter().any(|k| k == click.key()) {

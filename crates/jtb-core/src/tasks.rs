@@ -81,6 +81,18 @@ impl Tasks {
         }
     }
 
+    /// Moves task `from` to where task `to` is. The order lasts until the window closes.
+    pub fn move_to(&mut self, from: isize, to: isize) {
+        let (Some(from_at), Some(to_at)) = (
+            self.items.iter().position(|t| t.id == from),
+            self.items.iter().position(|t| t.id == to),
+        ) else {
+            return;
+        };
+        let task = self.items.remove(from_at);
+        self.items.insert(to_at, task);
+    }
+
     pub fn contains(&self, id: isize) -> bool {
         self.items.iter().any(|t| t.id == id)
     }
@@ -166,6 +178,19 @@ mod tests {
         assert!(!tasks.has_new_title(2));
         tasks.set_active(Some(1));
         assert!(!tasks.has_new_title(1));
+    }
+
+    #[test]
+    fn move_to_puts_a_task_where_the_other_is() {
+        let mut tasks = Tasks::default();
+        for id in 1..=3 {
+            tasks.upsert(id, format!("w{id}"));
+        }
+        tasks.move_to(1, 3);
+        let ids: Vec<isize> = tasks.items().iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec![2, 3, 1]);
+        tasks.move_to(1, 99);
+        assert_eq!(tasks.items().len(), 3);
     }
 
     #[test]

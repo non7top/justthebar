@@ -402,6 +402,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     let monitor = task_monitor_of(hwnd);
                     match press {
                         Some((from, _, _)) if dragging => {
+                            log(&format!("drag from button {from} to {target:?}"));
                             if let Some(to) = target {
                                 crate::reorder(monitor, from, to);
                             }
