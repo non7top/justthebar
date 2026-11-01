@@ -66,6 +66,10 @@ pub struct ButtonView {
     pub flashing: bool,
     /// The title changed while the window was not active; drawn with a side stripe.
     pub title_changed: bool,
+    /// A window under a group header; indented on side bars.
+    pub child: bool,
+    /// A group or pin header.
+    pub header: bool,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -117,6 +121,14 @@ pub fn build_scene(
         .into_iter()
         .zip(buttons)
     {
+        let rect = if button.child && !edge.is_horizontal() {
+            Rect {
+                left: rect.left + 14.0 * scale,
+                ..rect
+            }
+        } else {
+            rect
+        };
         fills.push(Fill {
             rect,
             color: match (button.active, button.flashing, button.hovered) {
@@ -133,7 +145,10 @@ pub fn build_scene(
                     a: if hovered { 0.95 } else { 0.80 },
                 },
                 (false, false, true) => Color { a: 0.22, ..white },
-                (false, false, false) => Color { a: 0.10, ..white },
+                (false, false, false) => Color {
+                    a: if button.header { 0.17 } else { 0.10 },
+                    ..white
+                },
             },
         });
         let content = if button.title_changed {
@@ -223,6 +238,8 @@ mod tests {
                 minimized: false,
                 flashing: false,
                 title_changed: false,
+                child: false,
+                header: false,
                 icon: None,
             },
             ButtonView {
@@ -232,6 +249,8 @@ mod tests {
                 minimized: false,
                 flashing: false,
                 title_changed: false,
+                child: false,
+                header: false,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -252,6 +271,8 @@ mod tests {
             minimized: true,
             flashing: false,
             title_changed: false,
+            child: false,
+            header: false,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
@@ -264,6 +285,8 @@ mod tests {
             minimized: false,
             flashing: true,
             title_changed: true,
+            child: false,
+            header: false,
             icon: None,
         };
         let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);

@@ -3,15 +3,16 @@
 mod bar;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use jtb_core::config::Config;
+use jtb_core::config::{Action, Button, Config, Target};
+use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
 use jtb_core::scene::ButtonView;
-use jtb_core::tasks::Tasks;
+use jtb_core::tasks::{Task, Tasks};
 use jtb_core::Edge;
 use jtb_win::{explorer, monitors, tasks};
 use windows::core::{w, Result};
@@ -47,6 +48,7 @@ thread_local! {
     static EXPLORER_HIDDEN: Cell<bool> = const { Cell::new(false) };
     static TASKS: RefCell<Tasks> = RefCell::new(Tasks::default());
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
+    static FOLDED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -222,10 +224,26 @@ fn poll_config() {
     }
 }
 
-/// The tasks on the monitor with this rect, in order, with what their buttons show.
-pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
+/// What a bar button stands for.
+enum Click {
+    Window(isize),
+    Header {
+        key: String,
+        windows: Vec<isize>,
+        pin: Option<usize>,
+    },
+}
+
+fn current_config() -> Config {
+    STATE.with_borrow(|s| s.as_ref().map(|s| s.config.clone()).unwrap_or_default())
+}
+
+/// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.
+fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)> {
+    let rules = Rules::new(&config.groups);
+    let folded = FOLDED.with_borrow(|f| f.clone());
     TASKS.with_borrow(|tasks| {
-        tasks
+        let visible: Vec<Task> = tasks
             .items()
             .iter()
             .filter(|task| {
@@ -233,26 +251,132 @@ pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
                     monitors::rect_of_window(tasks::hwnd_of(task.id)).is_none_or(|r| r == rect)
                 })
             })
-            .map(|task| {
-                let view = ButtonView {
-                    title: task.title.clone(),
-                    active: tasks.active() == Some(task.id),
-                    hovered: false,
-                    minimized: tasks::is_minimized(task.id),
-                    flashing: tasks.is_flashing(task.id),
-                    title_changed: tasks.has_new_title(task.id),
-                    icon: ICONS.with_borrow(|icons| icons.get(&task.id).cloned().flatten()),
-                };
-                (task.id, view)
+            .cloned()
+            .collect();
+        let icon_of = |id: isize| ICONS.with_borrow(|icons| icons.get(&id).cloned().flatten());
+        let rows = build_rows(
+            &visible,
+            &config.pins,
+            &rules,
+            &folded,
+            &[],
+            config.grouping.mode,
+        );
+        rows.into_iter()
+            .map(|row| match row {
+                Row::Window { id, child } => {
+                    let title = tasks.get(id).map(|t| t.title.clone()).unwrap_or_default();
+                    let view = ButtonView {
+                        title,
+                        active: tasks.active() == Some(id),
+                        hovered: false,
+                        minimized: tasks::is_minimized(id),
+                        flashing: tasks.is_flashing(id),
+                        title_changed: tasks.has_new_title(id),
+                        child,
+                        header: false,
+                        icon: icon_of(id),
+                    };
+                    (view, Click::Window(id))
+                }
+                Row::Header {
+                    key,
+                    name,
+                    pin,
+                    windows,
+                    folded,
+                } => {
+                    let active = windows.iter().any(|id| tasks.active() == Some(*id));
+                    let title = if windows.is_empty() {
+                        name
+                    } else {
+                        let marker = if folded { "\u{25B8}" } else { "\u{25BE}" };
+                        format!("{marker} {name} ({})", windows.len())
+                    };
+                    let view = ButtonView {
+                        title,
+                        active,
+                        hovered: false,
+                        minimized: windows.iter().all(|id| tasks::is_minimized(*id)),
+                        flashing: windows.iter().any(|id| tasks.is_flashing(*id)),
+                        title_changed: !active && windows.iter().any(|id| tasks.has_new_title(*id)),
+                        child: false,
+                        header: true,
+                        icon: windows.first().and_then(|id| icon_of(*id)),
+                    };
+                    (view, Click::Header { key, windows, pin })
+                }
             })
             .collect()
     })
 }
 
-/// A click on the `index`th task button of the bar on `monitor`.
-pub fn click_task(monitor: Option<RECT>, index: usize) {
-    if let Some((id, view)) = bar_tasks(monitor).into_iter().nth(index) {
-        tasks::activate_or_minimize(id, view.active);
+/// What the bar on `monitor` shows, one entry per button.
+pub fn bar_views(monitor: Option<RECT>) -> Vec<ButtonView> {
+    build_bar(monitor, &current_config())
+        .into_iter()
+        .map(|(view, _)| view)
+        .collect()
+}
+
+fn toggle_fold(key: String) {
+    FOLDED.with_borrow_mut(|folded| {
+        if !folded.remove(&key) {
+            folded.insert(key);
+        }
+    });
+    bar::invalidate_all();
+}
+
+fn launch_app(path: &str, args: &[String]) {
+    if path.is_empty() || !tasks::launch(path, args) {
+        log(&format!("launch failed: {path}"));
+    }
+}
+
+/// A click of `button` on the `index`th button of the bar on `monitor`.
+pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
+    let config = current_config();
+    let Some((view, click)) = build_bar(monitor, &config).into_iter().nth(index) else {
+        return;
+    };
+    let target = match click {
+        Click::Window(_) => Target::Window,
+        Click::Header { .. } => Target::Header,
+    };
+    let exe_of = |id: isize| TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()));
+    match config.mouse.action(target, button) {
+        Action::None => {}
+        Action::Activate => match click {
+            Click::Window(id) => tasks::activate_or_minimize(id, view.active),
+            Click::Header { windows, pin, .. } => match windows.first() {
+                Some(id) => tasks::activate_or_minimize(*id, false),
+                None => {
+                    if let Some(pin) = pin.and_then(|i| config.pins.get(i)) {
+                        launch_app(&pin.path, &pin.args);
+                    }
+                }
+            },
+        },
+        Action::Launch => match click {
+            Click::Window(id) => launch_app(&exe_of(id).unwrap_or_default(), &[]),
+            Click::Header { windows, pin, .. } => match pin.and_then(|i| config.pins.get(i)) {
+                Some(pin) => launch_app(&pin.path, &pin.args),
+                None => {
+                    let exe = windows.first().and_then(|id| exe_of(*id));
+                    launch_app(&exe.unwrap_or_default(), &[]);
+                }
+            },
+        },
+        Action::ToggleFold => match click {
+            Click::Header { key, .. } => toggle_fold(key),
+            Click::Window(id) => {
+                let task = TASKS.with_borrow(|t| t.get(id).cloned());
+                if let Some(task) = task {
+                    toggle_fold(Rules::new(&config.groups).group_of(&task).key);
+                }
+            }
+        },
     }
 }
 
@@ -290,11 +414,18 @@ fn refresh_icons() {
     ICONS.with_borrow_mut(|icons| icons.retain(|id, _| ids.contains(id)));
 }
 
+fn fill_exe(list: &mut Tasks, id: isize) {
+    if list.get(id).is_some_and(|task| task.exe.is_empty()) {
+        list.set_exe(id, tasks::process_path(id).unwrap_or_default());
+    }
+}
+
 fn on_shell_hook(code: usize, id: isize) {
     TASKS.with_borrow_mut(|list| match code {
         tasks::HSHELL_FLASH => {
             if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
                 list.set_flashing(id, true);
             }
         }
@@ -302,6 +433,7 @@ fn on_shell_hook(code: usize, id: isize) {
             list.set_flashing(id, false);
             if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
             } else {
                 list.remove(id);
             }
@@ -312,6 +444,7 @@ fn on_shell_hook(code: usize, id: isize) {
                 list.set_active(None);
             } else if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
                 list.set_active(Some(id));
             }
         }

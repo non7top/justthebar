@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use jtb_core::buttons::{hit_test, layout_buttons};
-use jtb_core::config::{BarConfig, Config};
+use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, ButtonView, Color};
 use jtb_ui::{D2dRenderer, Renderer};
@@ -16,8 +16,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TR
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, RegisterClassW,
     SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MOUSEMOVE,
-    WM_PAINT, WM_SIZE, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
+    WM_MOUSEMOVE, WM_PAINT, WM_SIZE, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
@@ -260,10 +261,10 @@ fn paint(hwnd: HWND, bar: AppBar) {
         scale,
         background_of(hwnd),
         (time.wHour, time.wMinute),
-        &crate::bar_tasks(task_monitor_of(hwnd))
+        &crate::bar_views(task_monitor_of(hwnd))
             .into_iter()
             .enumerate()
-            .map(|(i, (_, view))| ButtonView {
+            .map(|(i, view)| ButtonView {
                 hovered: hover == Some(i),
                 ..view
             })
@@ -277,14 +278,14 @@ fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let count = crate::bar_tasks(task_monitor_of(hwnd)).len();
+    let count = crate::bar_views(task_monitor_of(hwnd)).len();
     let rects = layout_buttons(bar.edge(), width as f32, height as f32, scale, count);
     hit_test(&rects, x, y)
 }
 
-fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM) {
+fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
     if let Some(index) = button_at(hwnd, bar, lparam) {
-        crate::click_task(task_monitor_of(hwnd), index);
+        crate::click_row(task_monitor_of(hwnd), index, button);
     }
 }
 
@@ -342,7 +343,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_LBUTTONDOWN => {
                 if let Some(bar) = bar {
-                    click(hwnd, bar, lparam);
+                    click(hwnd, bar, lparam, Button::Left);
+                }
+                LRESULT(0)
+            }
+            WM_MBUTTONDOWN => {
+                if let Some(bar) = bar {
+                    click(hwnd, bar, lparam, Button::Middle);
                 }
                 LRESULT(0)
             }

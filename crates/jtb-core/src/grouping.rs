@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::config::{GroupConfig, GroupingMode, PinConfig};
-use crate::tasks::{Task, Tasks};
+use crate::tasks::Task;
 
 /// How windows are sorted into groups.
 #[derive(Debug, Clone, Default)]
@@ -100,7 +100,7 @@ struct Group {
 /// window appeared; `order` (group keys) overrides that. A group of one window without a pin is a
 /// plain button.
 pub fn build_rows(
-    tasks: &Tasks,
+    tasks: &[Task],
     pins: &[PinConfig],
     rules: &Rules,
     folded: &HashSet<String>,
@@ -109,7 +109,6 @@ pub fn build_rows(
 ) -> Vec<Row> {
     if mode == GroupingMode::Off {
         return tasks
-            .items()
             .iter()
             .map(|t| Row::Window {
                 id: t.id,
@@ -133,7 +132,7 @@ pub fn build_rows(
             windows: Vec::new(),
         });
     }
-    for task in tasks.items() {
+    for task in tasks {
         let id = rules.group_of(task);
         match groups.iter_mut().find(|g| g.id.key == id.key) {
             Some(group) => group.windows.push(task.id),
@@ -183,6 +182,7 @@ pub fn build_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::Tasks;
 
     fn tasks(list: &[(isize, &str)]) -> Tasks {
         let mut tasks = Tasks::default();
@@ -193,7 +193,7 @@ mod tests {
         tasks
     }
 
-    fn rows(tasks: &Tasks, pins: &[PinConfig], groups: &[GroupConfig]) -> Vec<Row> {
+    fn rows(tasks: &[Task], pins: &[PinConfig], groups: &[GroupConfig]) -> Vec<Row> {
         build_rows(
             tasks,
             pins,
@@ -219,7 +219,10 @@ mod tests {
     #[test]
     fn single_windows_stay_plain() {
         let t = tasks(&[(1, r"C:\a\one.exe"), (2, r"C:\a\two.exe")]);
-        assert_eq!(rows(&t, &[], &[]), vec![window(1, false), window(2, false)]);
+        assert_eq!(
+            rows(t.items(), &[], &[]),
+            vec![window(1, false), window(2, false)]
+        );
     }
 
     #[test]
@@ -229,7 +232,7 @@ mod tests {
             (2, r"C:\a\two.exe"),
             (3, r"c:\A\ONE.exe"),
         ]);
-        let got = rows(&t, &[], &[]);
+        let got = rows(t.items(), &[], &[]);
         assert_eq!(
             got,
             vec![
@@ -252,7 +255,7 @@ mod tests {
         let t = tasks(&[(1, r"C:\a\one.exe"), (2, r"C:\a\one.exe")]);
         let folded = HashSet::from([r"exe:c:\a\one.exe".to_string()]);
         let got = build_rows(
-            &t,
+            t.items(),
             &[],
             &Rules::default(),
             &folded,
@@ -271,7 +274,7 @@ mod tests {
             (3, r"C:\Windows\System32\ApplicationFrameHost.exe"),
             (4, r"C:\Windows\System32\ApplicationFrameHost.exe"),
         ]);
-        assert!(rows(&t, &[], &[])
+        assert!(rows(t.items(), &[], &[])
             .iter()
             .all(|r| matches!(r, Row::Window { child: false, .. })));
     }
@@ -280,7 +283,7 @@ mod tests {
     fn pins_come_first_and_claim_their_windows() {
         let t = tasks(&[(1, r"C:\a\one.exe"), (2, r"C:\a\two.exe")]);
         let pins = [pin("Two", r"C:\a\two.exe"), pin("", r"C:\a\idle.exe")];
-        let got = rows(&t, &pins, &[]);
+        let got = rows(t.items(), &pins, &[]);
         assert_eq!(got.len(), 4);
         assert!(
             matches!(&got[0], Row::Header { name, pin: Some(0), windows, .. } if name == "Two" && windows == &vec![2])
@@ -303,7 +306,7 @@ mod tests {
             name: "PuTTY".into(),
             exes: vec!["puttyportable.exe".into(), "putty.exe".into()],
         }];
-        let got = rows(&t, &[], &groups);
+        let got = rows(t.items(), &[], &groups);
         assert!(matches!(&got[0], Row::Header { key, name, windows, .. }
             if key == "group:putty" && name == "PuTTY" && windows == &vec![1, 2]));
         assert_eq!(got.last(), Some(&window(3, false)));
@@ -316,7 +319,7 @@ mod tests {
             name: "PuTTY".into(),
             exes: vec!["puttyportable.exe".into(), "putty.exe".into()],
         }];
-        let got = rows(&t, &[pin("", r"E:\tools\putty.exe")], &groups);
+        let got = rows(t.items(), &[pin("", r"E:\tools\putty.exe")], &groups);
         assert!(
             matches!(&got[0], Row::Header { pin: Some(0), windows, .. } if windows == &vec![1, 2])
         );
@@ -332,7 +335,7 @@ mod tests {
         ]);
         let order = [r"exe:c:\a\two.exe".to_string()];
         let got = build_rows(
-            &t,
+            t.items(),
             &[],
             &Rules::default(),
             &HashSet::new(),
@@ -346,7 +349,7 @@ mod tests {
     fn off_mode_is_one_button_per_window() {
         let t = tasks(&[(1, r"C:\a\one.exe"), (2, r"C:\a\one.exe")]);
         let got = build_rows(
-            &t,
+            t.items(),
             &[pin("", r"C:\a\one.exe")],
             &Rules::default(),
             &HashSet::new(),
