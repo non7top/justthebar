@@ -313,6 +313,11 @@ pub fn icon(id: isize, icon_id: u64) -> Option<Icon> {
     decode_icon(icon_handle(hwnd_of(id))?, icon_id)
 }
 
+/// Decodes an icon handle an app sent to the tray; such handles are valid in every process.
+pub fn icon_from_handle(handle: isize, icon_id: u64) -> Option<Icon> {
+    decode_icon(HICON(handle as *mut c_void), icon_id)
+}
+
 /// The icon of an executable or file, tagged with `icon_id`.
 pub fn exe_icon(path: &str, icon_id: u64) -> Option<Icon> {
     let file = HSTRING::from(path);

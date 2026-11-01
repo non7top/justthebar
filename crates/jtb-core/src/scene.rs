@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::buttons::{clock_rect, icon_rect, layout_rows, stripe_split, title_left};
+use crate::buttons::{bar_layout, clock_rect, icon_rect, stripe_split, title_left, tray_icon_rect};
 use crate::icon::Icon;
 use crate::Edge;
 
@@ -95,6 +95,13 @@ pub struct StartView {
     pub size: f32,
 }
 
+/// What one notification area icon shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrayView {
+    pub icon: Arc<Icon>,
+    pub hovered: bool,
+}
+
 /// What one task button shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ButtonView {
@@ -181,6 +188,7 @@ pub fn clock_text(hour: u16, minute: u16) -> String {
 }
 
 /// Lays out a bar of `width` x `height` pixels; `scale` is dpi / 96.
+#[allow(clippy::too_many_arguments)]
 pub fn build_scene(
     edge: Edge,
     width: f32,
@@ -189,6 +197,7 @@ pub fn build_scene(
     background: Color,
     (hour, minute): (u16, u16),
     buttons: &[ButtonView],
+    tray: &[TrayView],
 ) -> Scene {
     let white = Color::rgb(1.0, 1.0, 1.0);
     let mut fills = Vec::new();
@@ -199,17 +208,29 @@ pub fn build_scene(
         color: white,
         leading: false,
     }];
-    for (rect, button) in layout_rows(
+    let layout = bar_layout(
         edge,
         width,
         height,
         scale,
         buttons.len(),
         start_art_size(buttons),
-    )
-    .into_iter()
-    .zip(buttons)
-    {
+        tray.len(),
+    );
+    for (cell, view) in layout.tray.iter().zip(tray) {
+        if view.hovered {
+            fills.push(Fill {
+                rect: *cell,
+                color: Color { a: 0.22, ..white },
+            });
+        }
+        icons.push(IconDraw {
+            rect: tray_icon_rect(*cell, scale),
+            icon: Arc::clone(&view.icon),
+            opacity: 1.0,
+        });
+    }
+    for (rect, button) in layout.rows.into_iter().zip(buttons) {
         if let Some(frames) = button.start.as_ref().and_then(|s| s.frames.as_ref()) {
             let start = button.start.as_ref().expect("checked above");
             let mut draw = |frame: &Arc<Icon>, opacity: f32| {
@@ -382,10 +403,10 @@ mod tests {
     #[test]
     fn clock_sits_at_the_far_end() {
         let bg = Color::rgb(1.0, 0.0, 0.0);
-        let h = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[]);
+        let h = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[], &[]);
         assert_eq!(h.labels[0].rect.right, 1920.0);
         assert_eq!(h.labels[0].rect.left, 1840.0);
-        let v = build_scene(Edge::Left, 40.0, 1080.0, 1.0, bg, (12, 0), &[]);
+        let v = build_scene(Edge::Left, 40.0, 1080.0, 1.0, bg, (12, 0), &[], &[]);
         assert_eq!(v.labels[0].rect.bottom, 1080.0);
         assert_eq!(v.labels[0].rect.top, 1050.0);
     }
@@ -436,6 +457,7 @@ mod tests {
                 bg,
                 (1, 1),
                 &[start_button(Some(art(blend, pressed)))],
+                &[],
             )
         };
         let calm = at(0.0, false);
@@ -460,6 +482,37 @@ mod tests {
     }
 
     #[test]
+    fn tray_icons_are_drawn_in_their_cells_and_hover_lights_one() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let tray = |hovered| {
+            [TrayView {
+                icon: Arc::new(Icon {
+                    id: 9,
+                    width: 16,
+                    height: 16,
+                    bgra: vec![0; 16 * 16 * 4],
+                }),
+                hovered,
+            }]
+        };
+        let calm = build_scene(
+            Edge::Bottom,
+            800.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[],
+            &tray(false),
+        );
+        let lit = build_scene(Edge::Bottom, 800.0, 40.0, 1.0, bg, (1, 1), &[], &tray(true));
+        assert_eq!(calm.icons.len(), 1);
+        assert_eq!(calm.icons[0].icon.id, 9);
+        assert_eq!(calm.icons[0].rect.right - calm.icons[0].rect.left, 16.0);
+        assert_eq!(lit.fills.len(), calm.fills.len() + 1);
+    }
+
+    #[test]
     fn art_start_is_square_and_shifts_the_buttons() {
         let bg = Color::rgb(0.0, 0.0, 0.0);
         let task = ButtonView {
@@ -475,6 +528,7 @@ mod tests {
             bg,
             (1, 1),
             &[start_button(Some(art(0.0, false))), task.clone()],
+            &[],
         );
         let without = build_scene(
             Edge::Bottom,
@@ -484,6 +538,7 @@ mod tests {
             bg,
             (1, 1),
             std::slice::from_ref(&task),
+            &[],
         );
         assert!(with_art.fills[0].rect.left > without.fills[0].rect.left);
     }
@@ -504,6 +559,7 @@ mod tests {
                 pressed: false,
                 size: 54.0,
             }))],
+            &[],
         );
         assert_eq!(drawn.fills.len(), 5);
         assert_eq!(drawn.labels[1].text, "Start");
@@ -543,6 +599,7 @@ mod tests {
             bg,
             (1, 1),
             &[view(Drag::None)],
+            &[],
         );
         let after = build_scene(
             Edge::Bottom,
@@ -552,6 +609,7 @@ mod tests {
             bg,
             (1, 1),
             &[view(Drag::After)],
+            &[],
         );
         assert_eq!(after.fills.len(), plain.fills.len() + 1);
         let button = after.fills[0].rect;
@@ -566,6 +624,7 @@ mod tests {
             bg,
             (1, 1),
             &[view(Drag::Before)],
+            &[],
         );
         assert_eq!(before.fills[1].rect.top, before.fills[0].rect.top);
         assert_eq!(before.fills[1].rect.bottom - before.fills[1].rect.top, 3.0);
@@ -577,6 +636,7 @@ mod tests {
             bg,
             (1, 1),
             &[view(Drag::Source)],
+            &[],
         );
         assert!(source.fills[0].color.a < plain.fills[0].color.a);
         assert_eq!(source.fills.len(), plain.fills.len());
@@ -618,7 +678,7 @@ mod tests {
                 })),
             },
         ];
-        let scene = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &buttons);
+        let scene = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &buttons, &[]);
         assert_eq!(scene.fills.len(), 2);
         assert_eq!(scene.labels.len(), 3);
         assert!(scene.fills[1].color.a > scene.fills[0].color.a);
@@ -636,7 +696,7 @@ mod tests {
             start: None,
             icon: None,
         };
-        let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
+        let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain], &[]);
         assert!(scene.fills[1].color.a > calm.fills[0].color.a);
         assert!(calm.labels[1].color.a < scene.labels[2].color.a);
         let flash = ButtonView {
@@ -652,7 +712,7 @@ mod tests {
             start: None,
             icon: None,
         };
-        let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);
+        let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash], &[]);
         assert!(flashing.fills[0].color.r > flashing.fills[0].color.b);
         assert_eq!(flashing.fills.len(), 2);
         assert!(scene.labels[1].leading);

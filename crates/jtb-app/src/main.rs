@@ -12,7 +12,7 @@ use jtb_core::config::PinConfig;
 use jtb_core::config::{Action, Button, Config, StartConfig, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
-use jtb_core::scene::{ButtonView, Drag, StartView};
+use jtb_core::scene::{ButtonView, Drag, StartView, TrayView};
 use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
@@ -178,9 +178,10 @@ fn apply(config: &Config, force_hide_explorer: bool) {
     bar::destroy_all();
     let monitors = monitors::list();
     let mut planned = Vec::new();
-    for bar_config in config.bars.iter().filter(|b| b.enabled) {
+    for (index, bar_config) in config.bars.iter().enumerate().filter(|(_, b)| b.enabled) {
         match monitors::resolve(&monitors, bar_config.monitor) {
             Some((monitor_index, monitor_rect)) => planned.push(bar::Planned {
+                index,
                 config: bar_config.clone(),
                 monitor_index,
                 monitor_rect,
@@ -223,18 +224,54 @@ fn on_tray_packet(data: &[u8]) -> bool {
         .and_then(|path| path.rsplit('\\').next().map(str::to_string))
         .unwrap_or_default();
     let valid = packet.is_valid();
-    let changes = packet.changes(None);
-    let total = TRAY_ICONS.with_borrow_mut(|icons| {
+    let icon = if valid && packet.wants_icon() {
+        let id = next_icon_id();
+        tasks::icon_from_handle(packet.icon_handle, id).map(Arc::new)
+    } else {
+        None
+    };
+    let drawn = icon.is_some();
+    let changes = packet.changes(icon);
+    let (total, redraw) = TRAY_ICONS.with_borrow_mut(|icons| {
+        let mut redraw = false;
         for change in changes {
-            icons.apply(change);
+            redraw |= icons.apply(change);
         }
-        icons.len()
+        (icons.len(), redraw)
     });
     log(&format!(
-        "tray: message={} owner={owner} id={} flags={:#x} tip={:?} valid={valid} icons={total}",
+        "tray: message={} owner={owner} id={} flags={:#x} tip={:?} valid={valid} icon={drawn} icons={total}",
         packet.message, packet.id, packet.flags, packet.tip
     ));
+    if redraw {
+        bar::invalidate_all();
+    }
     valid
+}
+
+fn next_icon_id() -> u64 {
+    let id = NEXT_ICON_ID.get();
+    NEXT_ICON_ID.set(id + 1);
+    id
+}
+
+/// The icons the bar with this config index shows in its notification area; none for other bars.
+pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
+    let config = current_config();
+    if !config.tray.enabled || config.tray.bar != bar_index || !tray::is_active() {
+        return Vec::new();
+    }
+    TRAY_ICONS.with_borrow(|icons| {
+        icons
+            .visible()
+            .filter_map(|i| i.icon.clone())
+            .enumerate()
+            .map(|(at, icon)| TrayView {
+                icon,
+                hovered: hovered == Some(at),
+            })
+            .collect()
+    })
 }
 
 fn current_settings() -> Option<(Config, bool)> {

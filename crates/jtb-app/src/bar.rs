@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use jtb_core::buttons::{hit_test, layout_rows};
+use jtb_core::buttons::{bar_layout, hit_test};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
@@ -37,12 +37,16 @@ const FADE_STEP: f32 = 0.1;
 
 struct BarWindow {
     hwnd: HWND,
+    /// Position in `Config::bars`.
+    index: usize,
     bar: AppBar,
     background: Color,
     /// Show only the windows on this monitor; `None` shows all.
     task_monitor: Option<RECT>,
     /// Button under the mouse, and whether a `WM_MOUSELEAVE` is already requested.
     hover: Option<usize>,
+    /// Notification area icon under the mouse.
+    tray_hover: Option<usize>,
     tracking: bool,
     /// Button index and position where the left button went down, and whether it became a drag.
     press: Option<(usize, i32, i32)>,
@@ -58,6 +62,8 @@ thread_local! {
 
 /// A bar to create: its config, the monitor index it resolved to, and that monitor's rect.
 pub struct Planned {
+    /// Position in `Config::bars`.
+    pub index: usize,
     pub config: BarConfig,
     pub monitor_index: usize,
     pub monitor_rect: RECT,
@@ -130,10 +136,12 @@ pub fn build(planned: Vec<Planned>, flush: bool, config: &Config) {
         BARS.with_borrow_mut(|bars| {
             bars.push(BarWindow {
                 hwnd,
+                index: plan.index,
                 bar,
                 background: config.appearance.bar_color.0,
                 task_monitor: config.tasks.per_monitor.then_some(plan.monitor_rect),
                 hover: None,
+                tray_hover: None,
                 tracking: false,
                 press: None,
                 dragging: false,
@@ -271,7 +279,7 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let time = unsafe { GetLocalTime() };
-    let (hover, dragged_from, blend, pressed) = BARS.with_borrow(|bars| {
+    let (hover, dragged_from, blend, pressed, index, tray_hover) = BARS.with_borrow(|bars| {
         bars.iter()
             .find(|b| b.hwnd == hwnd)
             .map(|b| {
@@ -280,9 +288,11 @@ fn paint(hwnd: HWND, bar: AppBar) {
                     b.press.filter(|_| b.dragging).map(|(from, _, _)| from),
                     b.start_blend,
                     b.press.is_some_and(|(index, _, _)| index == 0),
+                    b.index,
+                    b.tray_hover,
                 )
             })
-            .unwrap_or((None, None, 0.0, false))
+            .unwrap_or((None, None, 0.0, false, 0, None))
     });
     let scene = build_scene(
         bar.edge(),
@@ -313,6 +323,7 @@ fn paint(hwnd: HWND, bar: AppBar) {
                 }
             })
             .collect::<Vec<_>>(),
+        &crate::tray_views(index, tray_hover),
     );
     with_renderer(hwnd, |r| r.draw(&scene));
 }
@@ -348,22 +359,48 @@ fn point_of(lparam: LPARAM) -> (i32, i32) {
     )
 }
 
-fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
+/// What is under the mouse: a button, or an icon of the notification area.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hit {
+    Nothing,
+    Button(usize),
+    Tray(usize),
+}
+
+fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
     let (x, y) = point_of(lparam);
     let (x, y) = (x as f32, y as f32);
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let views = crate::bar_views(task_monitor_of(hwnd));
-    let count = views.len();
-    let rects = layout_rows(
+    let tray = crate::tray_views(bar_index(hwnd), None).len();
+    let layout = bar_layout(
         bar.edge(),
         width as f32,
         height as f32,
         scale,
-        count,
+        views.len(),
         start_art_size(&views),
+        tray,
     );
-    hit_test(&rects, x, y)
+    if let Some(at) = hit_test(&layout.tray, x, y) {
+        Hit::Tray(at)
+    } else if let Some(at) = hit_test(&layout.rows, x, y) {
+        Hit::Button(at)
+    } else {
+        Hit::Nothing
+    }
+}
+
+fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
+    match hit_at(hwnd, bar, lparam) {
+        Hit::Button(at) => Some(at),
+        _ => None,
+    }
+}
+
+fn bar_index(hwnd: HWND) -> usize {
+    BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).map_or(0, |b| b.index))
 }
 
 /// Records or clears the left-button press; returns what was recorded before.
@@ -403,16 +440,17 @@ fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
 }
 
 /// Moves the hover highlight, and asks for `WM_MOUSELEAVE` once per entry into the window.
-fn hover_to(hwnd: HWND, hover: Option<usize>) {
+fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) {
     let (changed, start_tracking, hot_changed) = BARS.with_borrow_mut(|bars| {
         let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
             return (false, false, false);
         };
-        let start = hover.is_some() && !bar.tracking;
+        let start = (hover.is_some() || tray.is_some()) && !bar.tracking;
         bar.tracking |= start;
-        let changed = bar.hover != hover;
+        let changed = bar.hover != hover || bar.tray_hover != tray;
         let hot_changed = (bar.hover == Some(0)) != (hover == Some(0));
         bar.hover = hover;
+        bar.tray_hover = tray;
         (changed, start, hot_changed)
     });
     // Re-arming the timer on every mouse move would keep it from ever firing.
@@ -520,7 +558,12 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_MOUSEMOVE => {
                 note_drag(hwnd, lparam);
                 if let Some(bar) = bar {
-                    hover_to(hwnd, button_at(hwnd, bar, lparam));
+                    let (button, tray) = match hit_at(hwnd, bar, lparam) {
+                        Hit::Button(at) => (Some(at), None),
+                        Hit::Tray(at) => (None, Some(at)),
+                        Hit::Nothing => (None, None),
+                    };
+                    hover_to(hwnd, button, tray);
                 }
                 LRESULT(0)
             }
@@ -530,7 +573,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         bar.tracking = false;
                     }
                 });
-                hover_to(hwnd, None);
+                hover_to(hwnd, None, None);
                 LRESULT(0)
             }
             WM_TIMER if wparam.0 == TIMER_START_FADE => {

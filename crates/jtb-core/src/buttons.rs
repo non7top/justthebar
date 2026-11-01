@@ -7,6 +7,9 @@ const BUTTON_MAX_LONG: f32 = 180.0;
 const BUTTON_VERTICAL_LONG: f32 = 30.0;
 const PAD: f32 = 4.0;
 const GAP: f32 = 2.0;
+/// Side of one notification area cell, and of the icon in it.
+const TRAY_CELL: f32 = 24.0;
+const TRAY_ICON: f32 = 16.0;
 
 /// The clock sits at the far end of the bar. `scale` is dpi / 96.
 pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
@@ -30,12 +33,13 @@ pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
 /// One rect per task button, laid out from the start of the bar up to the clock. Horizontal bars
 /// put buttons side by side (shrinking them to fit), vertical bars stack them.
 pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> Vec<Rect> {
-    layout_from(edge, width, height, scale, count, 0.0)
+    layout_from(edge, width, height, scale, count, 0.0, 0.0)
 }
 
 /// Like `layout_buttons`, but with `start_size` (pixels at 100% scale) the first rect is a square
 /// for button art, as large as that but never thicker than the bar, centered across the bar. The
-/// other buttons share what is left.
+/// other buttons share what is left. `reserved` pixels at the end of the bar, before the clock,
+/// are kept free (the notification area).
 pub fn layout_rows(
     edge: Edge,
     width: f32,
@@ -43,9 +47,10 @@ pub fn layout_rows(
     scale: f32,
     count: usize,
     start_size: Option<f32>,
+    reserved: f32,
 ) -> Vec<Rect> {
     let Some(start_size) = start_size.filter(|_| count > 0) else {
-        return layout_buttons(edge, width, height, scale, count);
+        return layout_from(edge, width, height, scale, count, 0.0, reserved);
     };
     let pad = PAD * scale;
     let thickness = if edge.is_horizontal() { height } else { width };
@@ -70,6 +75,7 @@ pub fn layout_rows(
         scale,
         count - 1,
         side + GAP * scale,
+        reserved,
     ));
     rects
 }
@@ -82,6 +88,7 @@ fn layout_from(
     scale: f32,
     count: usize,
     lead: f32,
+    reserved: f32,
 ) -> Vec<Rect> {
     if count == 0 {
         return Vec::new();
@@ -91,7 +98,7 @@ fn layout_from(
     let gap = GAP * scale;
     let n = count as f32;
     if edge.is_horizontal() {
-        let available = (clock.left - 2.0 * pad - lead).max(0.0);
+        let available = (clock.left - 2.0 * pad - lead - reserved).max(0.0);
         let each = (BUTTON_MAX_LONG * scale)
             .min((available - gap * (n - 1.0)) / n)
             .max(0.0);
@@ -107,7 +114,7 @@ fn layout_from(
             })
             .collect()
     } else {
-        let available = (clock.top - 2.0 * pad - lead).max(0.0);
+        let available = (clock.top - 2.0 * pad - lead - reserved).max(0.0);
         let each = (BUTTON_VERTICAL_LONG * scale)
             .min((available - gap * (n - 1.0)) / n)
             .max(0.0);
@@ -122,6 +129,94 @@ fn layout_from(
                 }
             })
             .collect()
+    }
+}
+
+/// The rects of a bar: one per button and one per notification area icon.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarLayout {
+    pub rows: Vec<Rect>,
+    pub tray: Vec<Rect>,
+}
+
+/// Lays out `buttons` rows and `tray` icon cells. The cells sit at the end of the bar before the
+/// clock: one row on top and bottom bars, a grid on side bars. Cells that do not fit are left out.
+pub fn bar_layout(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    buttons: usize,
+    start_size: Option<f32>,
+    tray: usize,
+) -> BarLayout {
+    let (cells, extent) = tray_cells(edge, width, height, scale, tray);
+    BarLayout {
+        rows: layout_rows(edge, width, height, scale, buttons, start_size, extent),
+        tray: cells,
+    }
+}
+
+/// The notification area cells in arrival order and the length of the bar they take.
+fn tray_cells(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> (Vec<Rect>, f32) {
+    if count == 0 {
+        return (Vec::new(), 0.0);
+    }
+    let clock = clock_rect(edge, width, height, scale);
+    let pad = PAD * scale;
+    let cell = TRAY_CELL * scale;
+    if edge.is_horizontal() {
+        let room = ((clock.left - 2.0 * pad) / cell).floor().max(0.0) as usize;
+        let shown = count.min(room);
+        let right = clock.left - pad;
+        let top = ((height - cell) / 2.0).max(0.0);
+        let cells = (0..shown)
+            .map(|i| {
+                let left = right - (shown - i) as f32 * cell;
+                Rect {
+                    left,
+                    top,
+                    right: left + cell,
+                    bottom: top + cell,
+                }
+            })
+            .collect();
+        (cells, shown as f32 * cell + pad)
+    } else {
+        let columns = (((width - 2.0 * pad) / cell).floor() as usize).max(1);
+        let rows = count.div_ceil(columns);
+        let bottom = clock.top - pad;
+        let room = ((clock.top - 2.0 * pad) / cell).floor().max(0.0) as usize;
+        let rows = rows.min(room);
+        let shown = count.min(rows * columns);
+        let first = (width - columns.min(shown) as f32 * cell) / 2.0;
+        let cells = (0..shown)
+            .map(|i| {
+                let (row, col) = (i / columns, i % columns);
+                let left = first + col as f32 * cell;
+                let top = bottom - (rows - row) as f32 * cell;
+                Rect {
+                    left,
+                    top,
+                    right: left + cell,
+                    bottom: top + cell,
+                }
+            })
+            .collect();
+        (cells, rows as f32 * cell + pad)
+    }
+}
+
+/// The icon square inside a notification area cell.
+pub fn tray_icon_rect(cell: Rect, scale: f32) -> Rect {
+    let size = TRAY_ICON * scale;
+    let left = (cell.left + cell.right - size) / 2.0;
+    let top = (cell.top + cell.bottom - size) / 2.0;
+    Rect {
+        left,
+        top,
+        right: left + size,
+        bottom: top + size,
     }
 }
 
@@ -236,29 +331,85 @@ mod tests {
     #[test]
     fn a_square_first_button_pushes_the_rest_along() {
         let plain = layout_buttons(Edge::Bottom, 1920.0, 40.0, 1.0, 3);
-        let rows = layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 4, Some(54.0));
+        let rows = layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 4, Some(54.0), 0.0);
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].right - rows[0].left, rows[0].bottom - rows[0].top);
         assert_eq!(rows[0].bottom - rows[0].top, 32.0);
         assert!(rows[1].left >= rows[0].right);
         assert!(rows[1].left > plain[0].left);
-        assert_eq!(layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None), plain);
-        let side = layout_rows(Edge::Left, 40.0, 600.0, 1.0, 2, Some(54.0));
+        assert_eq!(
+            layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 0.0),
+            plain
+        );
+        let side = layout_rows(Edge::Left, 40.0, 600.0, 1.0, 2, Some(54.0), 0.0);
         assert_eq!(side[0].right - side[0].left, 32.0);
         assert!(side[1].top >= side[0].bottom);
-        assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, Some(54.0)).is_empty());
+        assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, Some(54.0), 0.0).is_empty());
     }
 
     #[test]
     fn the_square_first_button_stops_growing_and_is_centered_on_a_thick_bar() {
-        let rows = layout_rows(Edge::Right, 200.0, 1080.0, 1.0, 2, Some(54.0));
+        let rows = layout_rows(Edge::Right, 200.0, 1080.0, 1.0, 2, Some(54.0), 0.0);
         assert_eq!(rows[0].right - rows[0].left, 54.0);
         assert_eq!(rows[0].bottom - rows[0].top, 54.0);
         assert_eq!(rows[0].left, 73.0);
         assert!(rows[1].top >= rows[0].bottom);
-        let scaled = layout_rows(Edge::Bottom, 1920.0, 200.0, 2.0, 2, Some(54.0));
+        let scaled = layout_rows(Edge::Bottom, 1920.0, 200.0, 2.0, 2, Some(54.0), 0.0);
         assert_eq!(scaled[0].bottom - scaled[0].top, 108.0);
         assert_eq!(scaled[0].top, 46.0);
+    }
+
+    #[test]
+    fn tray_cells_sit_before_the_clock_and_push_the_buttons_back() {
+        let plain = layout_buttons(Edge::Bottom, 1920.0, 40.0, 1.0, 3);
+        let layout = bar_layout(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 4);
+        let clock = clock_rect(Edge::Bottom, 1920.0, 40.0, 1.0);
+        assert_eq!(layout.tray.len(), 4);
+        assert!(layout.tray[3].right <= clock.left);
+        assert!(layout.tray[0].left < layout.tray[1].left);
+        assert_eq!(layout.tray[0].top, 8.0);
+        assert!(layout.rows[2].right <= layout.tray[0].left);
+        let none = bar_layout(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 0);
+        assert_eq!(none.rows, plain);
+        assert!(none.tray.is_empty());
+    }
+
+    #[test]
+    fn tray_cells_form_a_grid_above_the_clock_on_a_side_bar() {
+        let layout = bar_layout(Edge::Right, 200.0, 1080.0, 1.0, 2, None, 10);
+        let clock = clock_rect(Edge::Right, 200.0, 1080.0, 1.0);
+        // (200 - 8) / 24 = 8 columns, so 10 icons take two rows.
+        assert_eq!(layout.tray.len(), 10);
+        assert_eq!(layout.tray[0].top, layout.tray[7].top);
+        assert!(layout.tray[8].top > layout.tray[0].top);
+        assert!(layout.tray[9].bottom <= clock.top);
+        assert!(layout.rows[1].bottom <= layout.tray[0].top);
+    }
+
+    #[test]
+    fn tray_cells_that_do_not_fit_are_left_out() {
+        let layout = bar_layout(Edge::Bottom, 200.0, 40.0, 1.0, 0, None, 50);
+        let clock = clock_rect(Edge::Bottom, 200.0, 40.0, 1.0);
+        assert!(layout.tray.len() < 50);
+        assert!(layout
+            .tray
+            .iter()
+            .all(|c| c.left >= 0.0 && c.right <= clock.left));
+    }
+
+    #[test]
+    fn the_tray_icon_is_centered_in_its_cell() {
+        let cell = Rect {
+            left: 10.0,
+            top: 0.0,
+            right: 34.0,
+            bottom: 24.0,
+        };
+        let icon = tray_icon_rect(cell, 1.0);
+        assert_eq!(
+            (icon.left, icon.top, icon.right, icon.bottom),
+            (14.0, 4.0, 30.0, 20.0)
+        );
     }
 
     #[test]
