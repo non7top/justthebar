@@ -1,15 +1,16 @@
 use std::cell::RefCell;
 
-use jtb_core::buttons::{bar_layout, hit_test};
+use jtb_core::buttons::{bar_layout, hit_test, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
 use jtb_core::tray::{Mouse, Side};
+use jtb_core::Edge;
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{InvalidateRect, ValidateRect};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, InvalidateRect, ValidateRect};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -368,14 +369,12 @@ enum Hit {
     Tray(usize),
 }
 
-fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
-    let (x, y) = point_of(lparam);
-    let (x, y) = (x as f32, y as f32);
+fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let views = crate::bar_views(task_monitor_of(hwnd));
     let tray = crate::tray_views(bar_index(hwnd), None).len();
-    let layout = bar_layout(
+    bar_layout(
         bar.edge(),
         width as f32,
         height as f32,
@@ -383,13 +382,46 @@ fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
         views.len(),
         start_art_size(&views),
         tray,
-    );
+    )
+}
+
+fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
+    let (x, y) = point_of(lparam);
+    let (x, y) = (x as f32, y as f32);
+    let layout = layout_of(hwnd, bar);
     if let Some(at) = hit_test(&layout.tray, x, y) {
         Hit::Tray(at)
     } else if let Some(at) = hit_test(&layout.rows, x, y) {
         Hit::Button(at)
     } else {
         Hit::Nothing
+    }
+}
+
+/// Shows the tooltip of tray icon `at` on the side of its cell that faces into the screen.
+fn show_tray_tip(hwnd: HWND, bar: AppBar, at: usize) {
+    let Some(text) = crate::tray_tooltip(at) else {
+        jtb_win::tooltip::hide();
+        return;
+    };
+    let Some(cell) = layout_of(hwnd, bar).tray.get(at).copied() else {
+        return;
+    };
+    let mut origin = POINT { x: 0, y: 0 };
+    unsafe {
+        let _ = ClientToScreen(hwnd, &mut origin);
+    }
+    let (left, right) = (origin.x + cell.left as i32, origin.x + cell.right as i32);
+    let (top, bottom) = (origin.y + cell.top as i32, origin.y + cell.bottom as i32);
+    const GAP: i32 = 6;
+    let shown = jtb_win::tooltip::show(hwnd, &text, |w, h| match bar.edge() {
+        Edge::Bottom => ((left + right - w) / 2, top - h - GAP),
+        Edge::Top => ((left + right - w) / 2, bottom + GAP),
+        Edge::Left => (right + GAP, (top + bottom - h) / 2),
+        Edge::Right => (left - w - GAP, (top + bottom - h) / 2),
+    });
+    if !shown {
+        log("tray: tooltip window could not be created");
     }
 }
 
@@ -508,6 +540,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_LBUTTONDOWN => {
                 if let Some(bar) = bar {
                     if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        jtb_win::tooltip::hide();
                         crate::tray_press(at, Side::Left);
                         return LRESULT(0);
                     }
@@ -551,6 +584,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_RBUTTONDOWN => {
                 if let Some(bar) = bar {
                     if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
+                        jtb_win::tooltip::hide();
                         crate::tray_press(at, Side::Right);
                     }
                 }
@@ -600,6 +634,12 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     };
                     let before = hover_to(hwnd, button, tray);
                     crate::tray_hover_events(before, tray);
+                    if before != tray {
+                        match tray {
+                            Some(at) => show_tray_tip(hwnd, bar, at),
+                            None => jtb_win::tooltip::hide(),
+                        }
+                    }
                 }
                 LRESULT(0)
             }
@@ -611,6 +651,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 });
                 let before = hover_to(hwnd, None, None);
                 crate::tray_hover_events(before, None);
+                jtb_win::tooltip::hide();
                 LRESULT(0)
             }
             WM_TIMER if wparam.0 == TIMER_START_FADE => {

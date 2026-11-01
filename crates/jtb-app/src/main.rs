@@ -287,6 +287,13 @@ fn tray_icon_at(at: usize) -> Option<TrayIcon> {
     })
 }
 
+/// The tooltip of the icon in cell `at`; none when the app gave it no text.
+pub fn tray_tooltip(at: usize) -> Option<String> {
+    tray_icon_at(at)
+        .map(|i| i.tooltip)
+        .filter(|tip| !tip.is_empty())
+}
+
 /// The cursor in screen coordinates as the callback messages carry it: x low, y high.
 fn cursor_word() -> u32 {
     let mut at = POINT::default();
