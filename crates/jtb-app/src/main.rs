@@ -8,13 +8,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use jtb_core::config::PinConfig;
 use jtb_core::config::{Action, Button, Config, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
 use jtb_core::scene::ButtonView;
+use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
 use jtb_core::Edge;
-use jtb_win::{explorer, monitors, tasks};
+use jtb_win::{explorer, monitors, shell, tasks};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -49,7 +51,7 @@ thread_local! {
     static TASKS: RefCell<Tasks> = RefCell::new(Tasks::default());
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
-    static FOLDED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -225,6 +227,63 @@ fn poll_config() {
     }
 }
 
+/// What a bar button stands for.
+enum Click {
+    Window {
+        id: isize,
+        key: String,
+    },
+    Header {
+        key: String,
+        windows: Vec<isize>,
+        pin: Option<usize>,
+    },
+}
+
+impl Click {
+    /// Key of the group the button belongs to.
+    fn key(&self) -> &str {
+        match self {
+            Click::Window { key, .. } | Click::Header { key, .. } => key,
+        }
+    }
+}
+
+fn current_config() -> Config {
+    STATE.with_borrow(|s| s.as_ref().map(|s| s.config.clone()).unwrap_or_default())
+}
+
+fn state_file() -> Option<PathBuf> {
+    exe_sibling("jtb.state.json")
+}
+
+fn load_state() {
+    let Some(path) = state_file() else { return };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match UiState::parse(&text) {
+            Ok(state) => UI_STATE.set(state),
+            Err(e) => log(&format!("state file ignored: {e}")),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log(&format!("state file not read: {e}")),
+    }
+}
+
+fn save_state() {
+    let Some(path) = state_file() else { return };
+    let json = UI_STATE.with_borrow(|s| s.to_json());
+    if let Err(e) = std::fs::write(&path, json) {
+        log(&format!("state file not written: {e}"));
+    }
+}
+
+/// Pins from the config followed by the ones added from the bar.
+fn effective_pins(config: &Config) -> Vec<PinConfig> {
+    let mut pins = config.pins.clone();
+    UI_STATE.with_borrow(|s| pins.extend(s.pins.iter().cloned()));
+    pins
+}
+
 /// The icon of an executable, loaded once.
 fn exe_icon(path: &str) -> Option<Arc<Icon>> {
     EXE_ICONS.with_borrow_mut(|cache| {
@@ -242,24 +301,19 @@ fn exe_icon(path: &str) -> Option<Arc<Icon>> {
     })
 }
 
-/// What a bar button stands for.
-enum Click {
-    Window(isize),
-    Header {
-        key: String,
-        windows: Vec<isize>,
-        pin: Option<usize>,
-    },
-}
-
-fn current_config() -> Config {
-    STATE.with_borrow(|s| s.as_ref().map(|s| s.config.clone()).unwrap_or_default())
-}
-
 /// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.
-fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)> {
+fn build_bar(
+    monitor: Option<RECT>,
+    config: &Config,
+    pins: &[PinConfig],
+) -> Vec<(ButtonView, Click)> {
     let rules = Rules::new(&config.groups);
-    let folded = FOLDED.with_borrow(|f| f.clone());
+    let (folded, order) = UI_STATE.with_borrow(|s| {
+        (
+            s.folded.iter().cloned().collect::<HashSet<String>>(),
+            s.order.clone(),
+        )
+    });
     TASKS.with_borrow(|tasks| {
         let visible: Vec<Task> = tasks
             .items()
@@ -274,18 +328,22 @@ fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)>
         let icon_of = |id: isize| ICONS.with_borrow(|icons| icons.get(&id).cloned().flatten());
         let rows = build_rows(
             &visible,
-            &config.pins,
+            pins,
             &rules,
             &folded,
-            &[],
+            &order,
             config.grouping.mode,
         );
         rows.into_iter()
             .map(|row| match row {
                 Row::Window { id, child } => {
-                    let title = tasks.get(id).map(|t| t.title.clone()).unwrap_or_default();
+                    let task = tasks.get(id).cloned().unwrap_or(Task {
+                        id,
+                        title: String::new(),
+                        exe: String::new(),
+                    });
                     let view = ButtonView {
-                        title,
+                        title: task.title.clone(),
                         active: tasks.active() == Some(id),
                         hovered: false,
                         minimized: tasks::is_minimized(id),
@@ -295,7 +353,8 @@ fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)>
                         header: false,
                         icon: icon_of(id),
                     };
-                    (view, Click::Window(id))
+                    let key = rules.group_of(&task).key;
+                    (view, Click::Window { id, key })
                 }
                 Row::Header {
                     key,
@@ -321,7 +380,7 @@ fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)>
                         child: false,
                         header: true,
                         icon: pin
-                            .and_then(|i| config.pins.get(i))
+                            .and_then(|i| pins.get(i))
                             .and_then(|p| exe_icon(&p.path))
                             .or_else(|| windows.first().and_then(|id| icon_of(*id))),
                     };
@@ -334,18 +393,17 @@ fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)>
 
 /// What the bar on `monitor` shows, one entry per button.
 pub fn bar_views(monitor: Option<RECT>) -> Vec<ButtonView> {
-    build_bar(monitor, &current_config())
+    let config = current_config();
+    let pins = effective_pins(&config);
+    build_bar(monitor, &config, &pins)
         .into_iter()
         .map(|(view, _)| view)
         .collect()
 }
 
-fn toggle_fold(key: String) {
-    FOLDED.with_borrow_mut(|folded| {
-        if !folded.remove(&key) {
-            folded.insert(key);
-        }
-    });
+fn toggle_fold(key: &str) {
+    UI_STATE.with_borrow_mut(|s| s.toggle_fold(key));
+    save_state();
     bar::invalidate_all();
 }
 
@@ -355,49 +413,154 @@ fn launch_app(path: &str, args: &[String]) {
     }
 }
 
+fn exe_of(id: isize) -> String {
+    TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()).unwrap_or_default())
+}
+
+/// Starts the app a button stands for: the pin's program, else the window's executable.
+fn launch_click(click: &Click, pins: &[PinConfig]) {
+    match click {
+        Click::Window { id, .. } => launch_app(&exe_of(*id), &[]),
+        Click::Header { windows, pin, .. } => match pin.and_then(|i| pins.get(i)) {
+            Some(pin) => launch_app(&pin.path, &pin.args),
+            None => launch_app(
+                &windows.first().map(|id| exe_of(*id)).unwrap_or_default(),
+                &[],
+            ),
+        },
+    }
+}
+
 /// A click of `button` on the `index`th button of the bar on `monitor`.
 pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
     let config = current_config();
-    let Some((view, click)) = build_bar(monitor, &config).into_iter().nth(index) else {
+    let pins = effective_pins(&config);
+    let Some((view, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
         return;
     };
     let target = match click {
-        Click::Window(_) => Target::Window,
+        Click::Window { .. } => Target::Window,
         Click::Header { .. } => Target::Header,
     };
-    let exe_of = |id: isize| TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()));
     match config.mouse.action(target, button) {
         Action::None => {}
-        Action::Activate => match click {
-            Click::Window(id) => tasks::activate_or_minimize(id, view.active),
-            Click::Header { windows, pin, .. } => match windows.first() {
+        Action::Activate => match &click {
+            Click::Window { id, .. } => tasks::activate_or_minimize(*id, view.active),
+            Click::Header { windows, .. } => match windows.first() {
                 Some(id) => tasks::activate_or_minimize(*id, false),
-                None => {
-                    if let Some(pin) = pin.and_then(|i| config.pins.get(i)) {
-                        launch_app(&pin.path, &pin.args);
-                    }
-                }
+                None => launch_click(&click, &pins),
             },
         },
-        Action::Launch => match click {
-            Click::Window(id) => launch_app(&exe_of(id).unwrap_or_default(), &[]),
-            Click::Header { windows, pin, .. } => match pin.and_then(|i| config.pins.get(i)) {
-                Some(pin) => launch_app(&pin.path, &pin.args),
+        Action::Launch => launch_click(&click, &pins),
+        Action::ToggleFold => toggle_fold(click.key()),
+    }
+}
+
+/// Drags the `from`th button of the bar on `monitor` to where the `to`th is.
+pub fn reorder(monitor: Option<RECT>, from: usize, to: usize) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    let bar = build_bar(monitor, &config, &pins);
+    let (Some(source), Some(target)) = (bar.get(from), bar.get(to)) else {
+        return;
+    };
+    if source.0.child {
+        return;
+    }
+    let (from_key, to_key) = (source.1.key().to_string(), target.1.key().to_string());
+    if from_key == to_key {
+        return;
+    }
+    let mut sequence: Vec<String> = Vec::new();
+    for (_, click) in &bar {
+        if !sequence.iter().any(|k| k == click.key()) {
+            sequence.push(click.key().to_string());
+        }
+    }
+    UI_STATE.with_borrow_mut(|s| s.move_key(&sequence, &from_key, &to_key));
+    save_state();
+    bar::invalidate_all();
+}
+
+/// Files dropped on a bar become pins.
+pub fn pin_files(paths: Vec<String>) {
+    let mut added = false;
+    for path in paths {
+        let (program, args) = if path.to_lowercase().ends_with(".lnk") {
+            match shell::resolve_shortcut(&path) {
+                Some(resolved) => resolved,
                 None => {
-                    let exe = windows.first().and_then(|id| exe_of(*id));
-                    launch_app(&exe.unwrap_or_default(), &[]);
-                }
-            },
-        },
-        Action::ToggleFold => match click {
-            Click::Header { key, .. } => toggle_fold(key),
-            Click::Window(id) => {
-                let task = TASKS.with_borrow(|t| t.get(id).cloned());
-                if let Some(task) = task {
-                    toggle_fold(Rules::new(&config.groups).group_of(&task).key);
+                    log(&format!("shortcut not resolved: {path}"));
+                    continue;
                 }
             }
-        },
+        } else {
+            (path, Vec::new())
+        };
+        added |= pin_program(&program, args);
+    }
+    if added {
+        save_state();
+        bar::invalidate_all();
+    }
+}
+
+fn pin_program(path: &str, args: Vec<String>) -> bool {
+    let name = std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    UI_STATE.with_borrow_mut(|s| {
+        s.add_pin(PinConfig {
+            name,
+            path: path.to_string(),
+            args,
+        })
+    })
+}
+
+/// The right-click menu of the `index`th button of the bar on `monitor`.
+pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    let Some((_, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
+        return;
+    };
+    match &click {
+        Click::Window { id, .. } => {
+            let exe = exe_of(*id);
+            let items = [("Pin this app", !exe.is_empty()), ("Close window", true)];
+            match shell::popup_menu(hwnd, &items) {
+                Some(0) => {
+                    if pin_program(&exe, Vec::new()) {
+                        save_state();
+                        bar::invalidate_all();
+                    }
+                }
+                Some(1) => tasks::close(*id),
+                _ => {}
+            }
+        }
+        Click::Header { key, pin, .. } => {
+            let own_pin = pin.filter(|i| *i >= config.pins.len());
+            let items = [
+                ("Launch new", true),
+                ("Fold or unfold", true),
+                ("Unpin", own_pin.is_some()),
+            ];
+            match shell::popup_menu(hwnd, &items) {
+                Some(0) => launch_click(&click, &pins),
+                Some(1) => toggle_fold(key),
+                Some(2) => {
+                    if let Some(pin) = own_pin.and_then(|i| pins.get(i)) {
+                        UI_STATE.with_borrow_mut(|s| s.remove_pin(&pin.path));
+                        save_state();
+                        bar::invalidate_all();
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -491,6 +654,7 @@ fn main() -> Result<()> {
         "start quit_after={:?} restore={}",
         args.quit_after_secs, args.restore_explorer
     ));
+    load_state();
     if args.restore_explorer {
         let state = explorer::restore();
         log(&format!("explorer restored, state={state}"));

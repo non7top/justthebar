@@ -12,13 +12,15 @@ use windows::Win32::Graphics::Gdi::{InvalidateRect, ValidateRect};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, RegisterClassW,
     SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
-    WM_MOUSEMOVE, WM_PAINT, WM_SIZE, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SIZE,
+    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
@@ -35,6 +37,9 @@ struct BarWindow {
     /// Button under the mouse, and whether a `WM_MOUSELEAVE` is already requested.
     hover: Option<usize>,
     tracking: bool,
+    /// Button index and position where the left button went down, and whether it became a drag.
+    press: Option<(usize, i32, i32)>,
+    dragging: bool,
     renderer: Option<D2dRenderer>,
 }
 
@@ -121,9 +126,12 @@ pub fn build(planned: Vec<Planned>, flush: bool, config: &Config) {
                 task_monitor: config.tasks.per_monitor.then_some(plan.monitor_rect),
                 hover: None,
                 tracking: false,
+                press: None,
+                dragging: false,
                 renderer,
             })
         });
+        jtb_win::shell::accept_drops(hwnd);
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
@@ -273,14 +281,48 @@ fn paint(hwnd: HWND, bar: AppBar) {
     with_renderer(hwnd, |r| r.draw(&scene));
 }
 
+fn point_of(lparam: LPARAM) -> (i32, i32) {
+    (
+        (lparam.0 & 0xFFFF) as i16 as i32,
+        ((lparam.0 >> 16) & 0xFFFF) as i16 as i32,
+    )
+}
+
 fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
-    let x = (lparam.0 & 0xFFFF) as i16 as f32;
-    let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
+    let (x, y) = point_of(lparam);
+    let (x, y) = (x as f32, y as f32);
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let count = crate::bar_views(task_monitor_of(hwnd)).len();
     let rects = layout_buttons(bar.edge(), width as f32, height as f32, scale, count);
     hit_test(&rects, x, y)
+}
+
+/// Records or clears the left-button press; returns what was recorded before.
+fn set_press(hwnd: HWND, press: Option<(usize, i32, i32)>) -> (Option<(usize, i32, i32)>, bool) {
+    BARS.with_borrow_mut(|bars| {
+        let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
+            return (None, false);
+        };
+        let before = (bar.press, bar.dragging);
+        bar.press = press;
+        bar.dragging = false;
+        before
+    })
+}
+
+/// A press that moved a few pixels is a drag, not a click.
+fn note_drag(hwnd: HWND, lparam: LPARAM) {
+    let (x, y) = point_of(lparam);
+    BARS.with_borrow_mut(|bars| {
+        if let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) {
+            if let Some((_, px, py)) = bar.press {
+                if (x - px).abs() > 6 || (y - py).abs() > 6 {
+                    bar.dragging = true;
+                }
+            }
+        }
+    });
 }
 
 fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
@@ -343,8 +385,45 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_LBUTTONDOWN => {
                 if let Some(bar) = bar {
-                    click(hwnd, bar, lparam, Button::Left);
+                    let index = button_at(hwnd, bar, lparam);
+                    let (x, y) = point_of(lparam);
+                    set_press(hwnd, index.map(|i| (i, x, y)));
+                    if index.is_some() {
+                        SetCapture(hwnd);
+                    }
                 }
+                LRESULT(0)
+            }
+            WM_LBUTTONUP => {
+                let _ = ReleaseCapture();
+                if let Some(bar) = bar {
+                    let (press, dragging) = set_press(hwnd, None);
+                    let target = button_at(hwnd, bar, lparam);
+                    let monitor = task_monitor_of(hwnd);
+                    match press {
+                        Some((from, _, _)) if dragging => {
+                            if let Some(to) = target {
+                                crate::reorder(monitor, from, to);
+                            }
+                        }
+                        Some((from, _, _)) if Some(from) == target => {
+                            crate::click_row(monitor, from, Button::Left);
+                        }
+                        _ => {}
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_RBUTTONUP => {
+                if let Some(bar) = bar {
+                    if let Some(index) = button_at(hwnd, bar, lparam) {
+                        crate::context_menu(task_monitor_of(hwnd), index, hwnd);
+                    }
+                }
+                LRESULT(0)
+            }
+            WM_DROPFILES => {
+                crate::pin_files(jtb_win::shell::dropped_files(wparam.0));
                 LRESULT(0)
             }
             WM_MBUTTONDOWN => {
@@ -354,6 +433,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 LRESULT(0)
             }
             WM_MOUSEMOVE => {
+                note_drag(hwnd, lparam);
                 if let Some(bar) = bar {
                     hover_to(hwnd, button_at(hwnd, bar, lparam));
                 }
