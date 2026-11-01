@@ -14,7 +14,7 @@ impl Icon {
     }
 }
 
-fn premultiply(channel: u8, alpha: u8) -> u8 {
+pub(crate) fn premultiply(channel: u8, alpha: u8) -> u8 {
     ((channel as u16 * alpha as u16 + 127) / 255) as u8
 }
 
