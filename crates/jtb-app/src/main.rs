@@ -596,7 +596,15 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
     match config.mouse.action(target, button) {
         Action::None => {}
         Action::Activate => match &click {
-            Click::Window { id, .. } => tasks::activate_or_minimize(*id, view.active),
+            Click::Window { id, .. } => {
+                let foreground = tasks::foreground();
+                let active = view.active || foreground == Some(*id);
+                log(&format!(
+                    "click: window {id} active={} foreground={foreground:?}",
+                    view.active
+                ));
+                tasks::activate_or_minimize(*id, active);
+            }
             Click::Header { windows, .. } => match windows.first() {
                 Some(id) => tasks::activate_or_minimize(*id, false),
                 None => launch_click(&click, &pins),
