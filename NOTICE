@@ -1,0 +1,6 @@
+justthebar
+Copyright 2026 Vladimir Berezhnoy
+
+This product is a Rust port of system logic from Cairo Desktop's ManagedShell
+(https://github.com/cairoshell/ManagedShell), licensed under the Apache License 2.0.
+Files derived from ManagedShell are marked as such in their headers.

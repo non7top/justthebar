@@ -1,0 +1,57 @@
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-pc-windows-gnu
+      RUST_VERSION: 1.99.1
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup
+            ~/.cargo/bin
+          key: rustup-${{ runner.os }}-${{ env.RUST_VERSION }}-${{ env.TARGET }}
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ env.TARGET }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+
+      - name: Install mingw-w64
+        run: |
+          sudo find /etc/apt/sources.list.d -type f ! -name ubuntu.sources -delete
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --target "$TARGET" -- -D warnings
+
+      - name: Test (jtb-core, host triple)
+        run: cargo test -p jtb-core
+
+      - name: Build
+        run: cargo build --release --target "$TARGET"
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v5
+        with:
+          name: jtb-app
+          path: target/x86_64-pc-windows-gnu/release/jtb-app.exe
+          if-no-files-found: error

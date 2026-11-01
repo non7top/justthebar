@@ -1,0 +1,7 @@
+{
+  "hide_explorer_taskbar": true,
+  "bars": [
+    { "monitor": 0, "edge": "right", "size": 200 },
+    { "monitor": 1, "edge": "left", "size": 120 }
+  ]
+}
