@@ -3,16 +3,19 @@ use std::cell::Cell;
 use std::mem::{offset_of, size_of};
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    DrawTextW, GetDC, GetStockObject, ReleaseDC, SelectObject, DEFAULT_GUI_FONT, DT_CALCRECT,
+    DT_NOPREFIX, DT_WORDBREAK, HGDIOBJ,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
     InitCommonControlsEx, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, TOOLTIPS_CLASSW, TTF_ABSOLUTE,
-    TTF_TRACK, TTM_ADDTOOLW, TTM_DELTOOLW, TTM_GETBUBBLESIZE, TTM_SETMAXTIPWIDTH,
-    TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX,
-    TTTOOLINFOW,
+    TTF_TRACK, TTM_ADDTOOLW, TTM_ADJUSTRECT, TTM_DELTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE,
+    TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, SendMessageW, WINDOW_STYLE, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DestroyWindow, SendMessageW, WINDOW_STYLE, WM_GETFONT, WS_EX_TOPMOST, WS_POPUP,
 };
 
 const MAX_WIDTH: isize = 320;
@@ -78,6 +81,44 @@ fn create(owner: HWND) -> Option<HWND> {
     }
 }
 
+/// The size of the tooltip window for `text`. TTM_GETBUBBLESIZE is not used: comctl32 faulted
+/// inside it on this machine.
+fn bubble_size(window: HWND, text: &[u16]) -> (i32, i32) {
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: MAX_WIDTH as i32 - 16,
+        bottom: 0,
+    };
+    let mut text = text.to_vec();
+    unsafe {
+        let dc = GetDC(Some(window));
+        let font = send(window, WM_GETFONT, 0, None, 0);
+        let font = if font != 0 {
+            HGDIOBJ(font as *mut _)
+        } else {
+            GetStockObject(DEFAULT_GUI_FONT)
+        };
+        let old = SelectObject(dc, font);
+        DrawTextW(
+            dc,
+            &mut text,
+            &mut rect,
+            DT_CALCRECT | DT_NOPREFIX | DT_WORDBREAK,
+        );
+        SelectObject(dc, old);
+        ReleaseDC(Some(window), dc);
+    }
+    send(
+        window,
+        TTM_ADJUSTRECT,
+        1,
+        None,
+        &mut rect as *mut RECT as isize,
+    );
+    (rect.right - rect.left, rect.bottom - rect.top)
+}
+
 /// Shows `text` for `owner` (a bar window) at the screen position `place` returns for the size of
 /// the tooltip. Returns false when the tooltip window could not be made.
 pub fn show(owner: HWND, text: &str, place: impl FnOnce(i32, i32) -> (i32, i32)) -> bool {
@@ -86,7 +127,12 @@ pub fn show(owner: HWND, text: &str, place: impl FnOnce(i32, i32) -> (i32, i32))
         Some(tip) => tip,
         None => match create(owner) {
             Some(window) => {
-                send(window, TTM_ADDTOOLW, 0, Some(&tool_info(owner, None)), 0);
+                if send(window, TTM_ADDTOOLW, 0, Some(&tool_info(owner, None)), 0) == 0 {
+                    unsafe {
+                        let _ = DestroyWindow(window);
+                    }
+                    return false;
+                }
                 Tip { window, owner }
             }
             None => return false,
@@ -111,8 +157,7 @@ pub fn show(owner: HWND, text: &str, place: impl FnOnce(i32, i32) -> (i32, i32))
     let mut wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let info = tool_info(owner, Some(&mut wide));
     send(tip.window, TTM_UPDATETIPTEXTW, 0, Some(&info), 0);
-    let size = send(tip.window, TTM_GETBUBBLESIZE, 0, Some(&info), 0);
-    let (width, height) = ((size & 0xFFFF) as i32, ((size >> 16) & 0xFFFF) as i32);
+    let (width, height) = bubble_size(tip.window, &wide[..wide.len() - 1]);
     let (x, y) = place(width, height);
     send(
         tip.window,
