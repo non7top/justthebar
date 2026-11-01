@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use jtb_core::scene::{Color, Scene};
+use jtb_core::icon::downscale;
+use jtb_core::scene::{Color, IconDraw, Scene};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -27,8 +28,37 @@ use crate::Renderer;
 pub struct D2dRenderer {
     target: ID2D1HwndRenderTarget,
     text: IDWriteFactory,
-    /// Uploaded icon images by `Icon::id`.
-    bitmaps: HashMap<u64, ID2D1Bitmap>,
+    /// Uploaded icon images by `Icon::id` and the pixel size they were prepared for.
+    bitmaps: HashMap<(u64, u32, u32), ID2D1Bitmap>,
+}
+
+/// The whole-pixel size an icon is shrunk to before upload, when it is drawn smaller than it is.
+fn shrunk_size(draw: &IconDraw) -> Option<(u32, u32)> {
+    let w = (draw.rect.right - draw.rect.left).round();
+    let h = (draw.rect.bottom - draw.rect.top).round();
+    (w >= 1.0 && h >= 1.0 && (w as u32) < draw.icon.width && (h as u32) < draw.icon.height)
+        .then_some((w as u32, h as u32))
+}
+
+fn bitmap_key(draw: &IconDraw) -> (u64, u32, u32) {
+    let (w, h) = shrunk_size(draw).unwrap_or((draw.icon.width, draw.icon.height));
+    (draw.icon.id, w, h)
+}
+
+/// Where a shrunk icon lands: its size is kept and its corner snapped, so it is not resampled.
+fn snapped(draw: &IconDraw) -> jtb_core::scene::Rect {
+    match shrunk_size(draw) {
+        Some((w, h)) => {
+            let (left, top) = (draw.rect.left.round(), draw.rect.top.round());
+            jtb_core::scene::Rect {
+                left,
+                top,
+                right: left + w as f32,
+                bottom: top + h as f32,
+            }
+        }
+        None => draw.rect,
+    }
 }
 
 fn color(c: Color) -> D2D1_COLOR_F {
@@ -83,12 +113,20 @@ impl D2dRenderer {
     /// Uploads the scene's icons that are not cached yet and drops cached ones no longer shown.
     fn sync_bitmaps(&mut self, scene: &Scene) -> Result<()> {
         self.bitmaps
-            .retain(|id, _| scene.icons.iter().any(|draw| draw.icon.id == *id));
+            .retain(|key, _| scene.icons.iter().any(|draw| bitmap_key(draw) == *key));
         for draw in &scene.icons {
             let icon = &draw.icon;
-            if self.bitmaps.contains_key(&icon.id) {
+            let key = bitmap_key(draw);
+            if self.bitmaps.contains_key(&key) {
                 continue;
             }
+            let shrunk = shrunk_size(draw).and_then(|(w, h)| {
+                downscale(&icon.bgra, icon.width, icon.height, w, h).map(|p| (w, h, p))
+            });
+            let (width, height, pixels) = match &shrunk {
+                Some((w, h, pixels)) => (*w, *h, pixels.as_slice()),
+                None => (icon.width, icon.height, icon.bgra.as_slice()),
+            };
             let props = D2D1_BITMAP_PROPERTIES {
                 pixelFormat: D2D1_PIXEL_FORMAT {
                     format: DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -99,16 +137,13 @@ impl D2dRenderer {
             };
             let bitmap = unsafe {
                 self.target.CreateBitmap(
-                    D2D_SIZE_U {
-                        width: icon.width,
-                        height: icon.height,
-                    },
-                    Some(icon.bgra.as_ptr() as *const c_void),
-                    icon.width * 4,
+                    D2D_SIZE_U { width, height },
+                    Some(pixels.as_ptr() as *const c_void),
+                    width * 4,
                     &props,
                 )?
             };
-            self.bitmaps.insert(icon.id, bitmap);
+            self.bitmaps.insert(key, bitmap);
         }
         Ok(())
     }
@@ -156,10 +191,10 @@ impl Renderer for D2dRenderer {
                 self.target.FillRectangle(&rect(fill.rect), &brush);
             }
             for draw in &scene.icons {
-                if let Some(bitmap) = self.bitmaps.get(&draw.icon.id) {
+                if let Some(bitmap) = self.bitmaps.get(&bitmap_key(draw)) {
                     self.target.DrawBitmap(
                         bitmap,
-                        Some(&rect(draw.rect)),
+                        Some(&rect(snapped(draw))),
                         draw.opacity,
                         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                         None,
