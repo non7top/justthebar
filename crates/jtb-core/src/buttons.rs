@@ -72,6 +72,8 @@ pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: us
     }
 }
 
+const STRIPE_SIDE: f32 = 15.0;
+const STRIPE_THIN: f32 = 6.0;
 const ICON_SIZE: f32 = 16.0;
 const ICON_INSET: f32 = 6.0;
 
@@ -91,6 +93,55 @@ pub fn icon_rect(button: Rect, scale: f32) -> Rect {
 /// Where a button's title starts, after the icon.
 pub fn title_left(button: Rect, scale: f32) -> f32 {
     button.left + (2.0 * ICON_INSET + ICON_SIZE) * scale
+}
+
+/// Splits a button into a marker stripe on the side facing the screen edge the bar sits on, and
+/// the rest. Stripes on side bars are wide, on top and bottom bars thin.
+pub fn stripe_split(edge: Edge, button: Rect, scale: f32) -> (Rect, Rect) {
+    let wide = STRIPE_SIDE * scale;
+    let thin = STRIPE_THIN * scale;
+    match edge {
+        Edge::Left => (
+            Rect {
+                right: button.left + wide,
+                ..button
+            },
+            Rect {
+                left: button.left + wide,
+                ..button
+            },
+        ),
+        Edge::Right => (
+            Rect {
+                left: button.right - wide,
+                ..button
+            },
+            Rect {
+                right: button.right - wide,
+                ..button
+            },
+        ),
+        Edge::Top => (
+            Rect {
+                bottom: button.top + thin,
+                ..button
+            },
+            Rect {
+                top: button.top + thin,
+                ..button
+            },
+        ),
+        Edge::Bottom => (
+            Rect {
+                top: button.bottom - thin,
+                ..button
+            },
+            Rect {
+                bottom: button.bottom - thin,
+                ..button
+            },
+        ),
+    }
 }
 
 /// Index of the rect containing the point.
@@ -149,6 +200,25 @@ mod tests {
         assert_eq!(icon.right - icon.left, 16.0);
         assert_eq!(icon.top - button.top, button.bottom - icon.bottom);
         assert!(title_left(button, 1.0) > icon.right);
+    }
+
+    #[test]
+    fn stripe_sits_on_the_outer_side() {
+        let button = Rect {
+            left: 4.0,
+            top: 10.0,
+            right: 196.0,
+            bottom: 40.0,
+        };
+        let (right_stripe, right_rest) = stripe_split(Edge::Right, button, 1.0);
+        assert_eq!(right_stripe.right, button.right);
+        assert_eq!(right_stripe.right - right_stripe.left, 15.0);
+        assert_eq!(right_rest.right, right_stripe.left);
+        let (left_stripe, left_rest) = stripe_split(Edge::Left, button, 2.0);
+        assert_eq!(left_stripe.left, button.left);
+        assert_eq!(left_rest.left, left_stripe.right);
+        let (bottom_stripe, _) = stripe_split(Edge::Bottom, button, 1.0);
+        assert_eq!(bottom_stripe.bottom, button.bottom);
     }
 
     #[test]

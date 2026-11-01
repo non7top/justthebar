@@ -240,6 +240,7 @@ pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
                     hovered: false,
                     minimized: tasks::is_minimized(task.id),
                     flashing: tasks.is_flashing(task.id),
+                    title_changed: tasks.has_new_title(task.id),
                     icon: ICONS.with_borrow(|icons| icons.get(&task.id).cloned().flatten()),
                 };
                 (task.id, view)

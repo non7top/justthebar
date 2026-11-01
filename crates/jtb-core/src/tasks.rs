@@ -11,6 +11,7 @@ pub struct Tasks {
     items: Vec<Task>,
     active: Option<isize>,
     flashing: Vec<isize>,
+    title_changed: Vec<isize>,
 }
 
 impl Tasks {
@@ -22,12 +23,25 @@ impl Tasks {
         self.active
     }
 
-    /// Adds the window, or updates its title if it is already listed.
+    /// Adds the window, or updates its title if it is already listed. A new title on a window
+    /// that is not active is remembered until the window is activated.
     pub fn upsert(&mut self, id: isize, title: String) {
         match self.items.iter_mut().find(|t| t.id == id) {
-            Some(task) => task.title = title,
+            Some(task) => {
+                if task.title != title
+                    && self.active != Some(id)
+                    && !self.title_changed.contains(&id)
+                {
+                    self.title_changed.push(id);
+                }
+                task.title = title;
+            }
             None => self.items.push(Task { id, title }),
         }
+    }
+
+    pub fn has_new_title(&self, id: isize) -> bool {
+        self.title_changed.contains(&id)
     }
 
     pub fn is_flashing(&self, id: isize) -> bool {
@@ -44,6 +58,7 @@ impl Tasks {
 
     pub fn remove(&mut self, id: isize) {
         self.flashing.retain(|f| *f != id);
+        self.title_changed.retain(|f| *f != id);
         self.items.retain(|t| t.id != id);
         if self.active == Some(id) {
             self.active = None;
@@ -58,6 +73,7 @@ impl Tasks {
         self.active = id;
         if let Some(id) = id {
             self.flashing.retain(|f| *f != id);
+            self.title_changed.retain(|f| *f != id);
         }
     }
 
@@ -65,6 +81,8 @@ impl Tasks {
     pub fn replace_all(&mut self, tasks: Vec<Task>) {
         self.items.retain(|t| tasks.iter().any(|n| n.id == t.id));
         self.flashing.retain(|f| tasks.iter().any(|n| n.id == *f));
+        self.title_changed
+            .retain(|f| tasks.iter().any(|n| n.id == *f));
         for task in tasks {
             self.upsert(task.id, task.title);
         }
@@ -114,6 +132,22 @@ mod tests {
         assert!(!tasks.is_flashing(1));
         tasks.set_flashing(1, true);
         assert!(!tasks.is_flashing(1));
+    }
+
+    #[test]
+    fn a_new_title_on_an_inactive_window_is_flagged_until_activated() {
+        let mut tasks = Tasks::default();
+        tasks.upsert(1, "one".into());
+        tasks.upsert(2, "two".into());
+        tasks.set_active(Some(2));
+        tasks.upsert(1, "one".into());
+        assert!(!tasks.has_new_title(1));
+        tasks.upsert(1, "one (3)".into());
+        tasks.upsert(2, "two!".into());
+        assert!(tasks.has_new_title(1));
+        assert!(!tasks.has_new_title(2));
+        tasks.set_active(Some(1));
+        assert!(!tasks.has_new_title(1));
     }
 
     #[test]

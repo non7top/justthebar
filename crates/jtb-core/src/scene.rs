@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::buttons::{clock_rect, icon_rect, layout_buttons, title_left};
+use crate::buttons::{clock_rect, icon_rect, layout_buttons, stripe_split, title_left};
 use crate::icon::Icon;
 use crate::Edge;
 
@@ -51,6 +51,8 @@ pub struct ButtonView {
     pub minimized: bool,
     /// Asking for attention; drawn in the flash color.
     pub flashing: bool,
+    /// The title changed while the window was not active; drawn with a side stripe.
+    pub title_changed: bool,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -121,6 +123,16 @@ pub fn build_scene(
                 (false, false, false) => Color { a: 0.10, ..white },
             },
         });
+        let content = if button.title_changed {
+            let (stripe, rest) = stripe_split(edge, rect, scale);
+            fills.push(Fill {
+                rect: stripe,
+                color: Color::rgb(1.0, 0.35, 0.0),
+            });
+            rest
+        } else {
+            rect
+        };
         let opacity = if button.minimized {
             MINIMIZED_OPACITY
         } else {
@@ -128,17 +140,17 @@ pub fn build_scene(
         };
         if let Some(icon) = &button.icon {
             icons.push(IconDraw {
-                rect: icon_rect(rect, scale),
+                rect: icon_rect(content, scale),
                 icon: Arc::clone(icon),
                 opacity,
             });
         }
-        let left = title_left(rect, scale).min(rect.right);
+        let left = title_left(content, scale).min(content.right);
         labels.push(Label {
             rect: Rect {
                 left,
-                right: (rect.right - 6.0 * scale).max(left),
-                ..rect
+                right: (content.right - 6.0 * scale).max(left),
+                ..content
             },
             text: button.title.clone(),
             color: Color {
@@ -188,6 +200,7 @@ mod tests {
                 hovered: false,
                 minimized: false,
                 flashing: false,
+                title_changed: false,
                 icon: None,
             },
             ButtonView {
@@ -196,6 +209,7 @@ mod tests {
                 hovered: true,
                 minimized: false,
                 flashing: false,
+                title_changed: false,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -215,6 +229,7 @@ mod tests {
             hovered: false,
             minimized: true,
             flashing: false,
+            title_changed: false,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
@@ -226,10 +241,12 @@ mod tests {
             hovered: false,
             minimized: false,
             flashing: true,
+            title_changed: true,
             icon: None,
         };
         let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);
         assert!(flashing.fills[0].color.r > flashing.fills[0].color.b);
+        assert_eq!(flashing.fills.len(), 2);
         assert!(scene.labels[1].leading);
         assert!(!scene.labels[0].leading);
     }
