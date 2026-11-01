@@ -30,6 +30,55 @@ pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
 /// One rect per task button, laid out from the start of the bar up to the clock. Horizontal bars
 /// put buttons side by side (shrinking them to fit), vertical bars stack them.
 pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> Vec<Rect> {
+    layout_from(edge, width, height, scale, count, 0.0)
+}
+
+/// Like `layout_buttons`, but when `square_first` the first rect is a square as wide as the bar is
+/// thick (for button art) and the other buttons share what is left.
+pub fn layout_rows(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    count: usize,
+    square_first: bool,
+) -> Vec<Rect> {
+    if !square_first || count == 0 {
+        return layout_buttons(edge, width, height, scale, count);
+    }
+    let pad = PAD * scale;
+    let side = if edge.is_horizontal() {
+        (height - 2.0 * pad).max(0.0)
+    } else {
+        (width - 2.0 * pad).max(0.0)
+    };
+    let first = Rect {
+        left: pad,
+        top: pad,
+        right: pad + side,
+        bottom: pad + side,
+    };
+    let mut rects = vec![first];
+    rects.extend(layout_from(
+        edge,
+        width,
+        height,
+        scale,
+        count - 1,
+        side + GAP * scale,
+    ));
+    rects
+}
+
+/// Buttons laid out after `lead` pixels reserved at the start of the bar.
+fn layout_from(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    count: usize,
+    lead: f32,
+) -> Vec<Rect> {
     if count == 0 {
         return Vec::new();
     }
@@ -38,13 +87,13 @@ pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: us
     let gap = GAP * scale;
     let n = count as f32;
     if edge.is_horizontal() {
-        let available = (clock.left - 2.0 * pad).max(0.0);
+        let available = (clock.left - 2.0 * pad - lead).max(0.0);
         let each = (BUTTON_MAX_LONG * scale)
             .min((available - gap * (n - 1.0)) / n)
             .max(0.0);
         (0..count)
             .map(|i| {
-                let left = pad + i as f32 * (each + gap);
+                let left = pad + lead + i as f32 * (each + gap);
                 Rect {
                     left,
                     top: pad,
@@ -54,13 +103,13 @@ pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: us
             })
             .collect()
     } else {
-        let available = (clock.top - 2.0 * pad).max(0.0);
+        let available = (clock.top - 2.0 * pad - lead).max(0.0);
         let each = (BUTTON_VERTICAL_LONG * scale)
             .min((available - gap * (n - 1.0)) / n)
             .max(0.0);
         (0..count)
             .map(|i| {
-                let top = pad + i as f32 * (each + gap);
+                let top = pad + lead + i as f32 * (each + gap);
                 Rect {
                     left: pad,
                     top,
@@ -178,6 +227,25 @@ mod tests {
         assert!(rects[0].top < rects[1].top);
         assert!(rects[3].bottom <= clock_rect(Edge::Left, 40.0, 1080.0, 1.0).top);
         assert_eq!(rects[0].left, 4.0);
+    }
+
+    #[test]
+    fn a_square_first_button_pushes_the_rest_along() {
+        let plain = layout_buttons(Edge::Bottom, 1920.0, 40.0, 1.0, 3);
+        let rows = layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 4, true);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].right - rows[0].left, rows[0].bottom - rows[0].top);
+        assert_eq!(rows[0].bottom - rows[0].top, 32.0);
+        assert!(rows[1].left >= rows[0].right);
+        assert!(rows[1].left > plain[0].left);
+        assert_eq!(
+            layout_rows(Edge::Bottom, 1920.0, 40.0, 1.0, 3, false),
+            plain
+        );
+        let side = layout_rows(Edge::Left, 40.0, 600.0, 1.0, 2, true);
+        assert_eq!(side[0].right - side[0].left, 32.0);
+        assert!(side[1].top >= side[0].bottom);
+        assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, true).is_empty());
     }
 
     #[test]

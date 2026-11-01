@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 
-use jtb_core::buttons::{hit_test, layout_buttons};
+use jtb_core::buttons::{hit_test, layout_rows};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
-use jtb_core::scene::{build_scene, ButtonView, Color, Drag};
+use jtb_core::scene::{build_scene, ButtonView, Color, Drag, StartView};
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
@@ -16,17 +16,23 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, LoadCursorW, RegisterClassW,
-    SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP, WM_SIZE,
-    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, KillTimer, LoadCursorW,
+    RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES, WM_ERASEBKGND,
+    WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONUP,
+    WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
 
 const VK_ESCAPE: usize = 0x1B;
 const WM_MOUSELEAVE: u32 = 0x02A3;
+
+/// Repaints the Start button while its hot frame fades in or out.
+const TIMER_START_FADE: usize = 1;
+const FADE_TICK_MS: u32 = 30;
+/// Fraction of the fade done per tick: 30 ms of 300 ms, as in Open-Shell.
+const FADE_STEP: f32 = 0.1;
 
 struct BarWindow {
     hwnd: HWND,
@@ -40,6 +46,8 @@ struct BarWindow {
     /// Button index and position where the left button went down, and whether it became a drag.
     press: Option<(usize, i32, i32)>,
     dragging: bool,
+    /// How much of the Start button's hot frame is mixed in, 0 to 1.
+    start_blend: f32,
     renderer: Option<D2dRenderer>,
 }
 
@@ -128,6 +136,7 @@ pub fn build(planned: Vec<Planned>, flush: bool, config: &Config) {
                 tracking: false,
                 press: None,
                 dragging: false,
+                start_blend: 0.0,
                 renderer,
             })
         });
@@ -261,16 +270,18 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let time = unsafe { GetLocalTime() };
-    let (hover, dragged_from) = BARS.with_borrow(|bars| {
+    let (hover, dragged_from, blend, pressed) = BARS.with_borrow(|bars| {
         bars.iter()
             .find(|b| b.hwnd == hwnd)
             .map(|b| {
                 (
                     b.hover,
                     b.press.filter(|_| b.dragging).map(|(from, _, _)| from),
+                    b.start_blend,
+                    b.press.is_some_and(|(index, _, _)| index == 0),
                 )
             })
-            .unwrap_or((None, None))
+            .unwrap_or((None, None, 0.0, false))
     });
     let scene = build_scene(
         bar.edge(),
@@ -282,14 +293,51 @@ fn paint(hwnd: HWND, bar: AppBar) {
         &crate::bar_views(task_monitor_of(hwnd))
             .into_iter()
             .enumerate()
-            .map(|(i, view)| ButtonView {
-                hovered: hover == Some(i),
-                drag: dragged_from.map_or(Drag::None, |from| Drag::of(i, from, hover)),
-                ..view
+            .map(|(i, view)| {
+                let is_start = view.start.is_some();
+                ButtonView {
+                    hovered: hover == Some(i),
+                    active: view.active || (is_start && pressed),
+                    drag: if is_start {
+                        Drag::None
+                    } else {
+                        dragged_from.map_or(Drag::None, |from| Drag::of(i, from, hover))
+                    },
+                    start: view.start.map(|s| StartView {
+                        blend,
+                        pressed,
+                        ..s
+                    }),
+                    ..view
+                }
             })
             .collect::<Vec<_>>(),
     );
     with_renderer(hwnd, |r| r.draw(&scene));
+}
+
+/// Moves the Start button's blend one tick toward hot (pointer on it) or normal, and stops the
+/// timer once it got there.
+fn fade_step(hwnd: HWND) {
+    let settled = BARS.with_borrow_mut(|bars| {
+        let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
+            return true;
+        };
+        let target = if bar.hover == Some(0) { 1.0 } else { 0.0 };
+        let next = if bar.start_blend < target {
+            (bar.start_blend + FADE_STEP).min(target)
+        } else {
+            (bar.start_blend - FADE_STEP).max(target)
+        };
+        bar.start_blend = next;
+        next == target
+    });
+    unsafe {
+        let _ = InvalidateRect(Some(hwnd), None, false);
+        if settled {
+            let _ = KillTimer(Some(hwnd), TIMER_START_FADE);
+        }
+    }
 }
 
 fn point_of(lparam: LPARAM) -> (i32, i32) {
@@ -304,8 +352,20 @@ fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
     let (x, y) = (x as f32, y as f32);
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let count = crate::bar_views(task_monitor_of(hwnd)).len();
-    let rects = layout_buttons(bar.edge(), width as f32, height as f32, scale, count);
+    let views = crate::bar_views(task_monitor_of(hwnd));
+    let count = views.len();
+    let art_first = views
+        .first()
+        .and_then(|v| v.start.as_ref())
+        .is_some_and(|s| s.frames.is_some());
+    let rects = layout_rows(
+        bar.edge(),
+        width as f32,
+        height as f32,
+        scale,
+        count,
+        art_first,
+    );
     hit_test(&rects, x, y)
 }
 
@@ -347,16 +407,23 @@ fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
 
 /// Moves the hover highlight, and asks for `WM_MOUSELEAVE` once per entry into the window.
 fn hover_to(hwnd: HWND, hover: Option<usize>) {
-    let (changed, start_tracking) = BARS.with_borrow_mut(|bars| {
+    let (changed, start_tracking, hot_changed) = BARS.with_borrow_mut(|bars| {
         let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
-            return (false, false);
+            return (false, false, false);
         };
         let start = hover.is_some() && !bar.tracking;
         bar.tracking |= start;
         let changed = bar.hover != hover;
+        let hot_changed = (bar.hover == Some(0)) != (hover == Some(0));
         bar.hover = hover;
-        (changed, start)
+        (changed, start, hot_changed)
     });
+    // Re-arming the timer on every mouse move would keep it from ever firing.
+    if hot_changed && crate::start_enabled() {
+        unsafe {
+            SetTimer(Some(hwnd), TIMER_START_FADE, FADE_TICK_MS, None);
+        }
+    }
     if start_tracking {
         let mut track = TRACKMOUSEEVENT {
             cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
@@ -464,6 +531,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     }
                 });
                 hover_to(hwnd, None);
+                LRESULT(0)
+            }
+            WM_TIMER if wparam.0 == TIMER_START_FADE => {
+                fade_step(hwnd);
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::buttons::{clock_rect, icon_rect, layout_buttons, stripe_split, title_left};
+use crate::buttons::{clock_rect, icon_rect, layout_rows, stripe_split, title_left};
 use crate::icon::Icon;
 use crate::Edge;
 
@@ -83,6 +83,16 @@ impl Drag {
     }
 }
 
+/// The Start button. `frames` is its art (normal, hot, pressed); without art the button is drawn
+/// from squares and its title.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StartView {
+    pub frames: Option<[Arc<Icon>; 3]>,
+    /// How much of the hot frame is mixed over the normal one, 0 to 1.
+    pub blend: f32,
+    pub pressed: bool,
+}
+
 /// What one task button shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ButtonView {
@@ -100,6 +110,8 @@ pub struct ButtonView {
     /// A group or pin header.
     pub header: bool,
     pub drag: Drag,
+    /// Set on the Start button, which is always the first one.
+    pub start: Option<StartView>,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -135,6 +147,27 @@ const DROP_LINE: Color = Color {
     a: 1.0,
 };
 
+/// The squares of the drawn Start button.
+const START_MARK: Color = DROP_LINE;
+
+/// The largest rect of the aspect ratio `width` x `height` that fits in `rect`, centered.
+fn fit(rect: Rect, width: u32, height: u32) -> Rect {
+    let (rw, rh) = (rect.right - rect.left, rect.bottom - rect.top);
+    if width == 0 || height == 0 || rw <= 0.0 || rh <= 0.0 {
+        return rect;
+    }
+    let ratio = (rw / width as f32).min(rh / height as f32);
+    let (w, h) = (width as f32 * ratio, height as f32 * ratio);
+    let left = rect.left + (rw - w) / 2.0;
+    let top = rect.top + (rh - h) / 2.0;
+    Rect {
+        left,
+        top,
+        right: left + w,
+        bottom: top + h,
+    }
+}
+
 pub fn clock_text(hour: u16, minute: u16) -> String {
     format!("{hour:02}:{minute:02}")
 }
@@ -158,10 +191,33 @@ pub fn build_scene(
         color: white,
         leading: false,
     }];
-    for (rect, button) in layout_buttons(edge, width, height, scale, buttons.len())
+    let art_first = buttons
+        .first()
+        .and_then(|b| b.start.as_ref())
+        .is_some_and(|s| s.frames.is_some());
+    for (rect, button) in layout_rows(edge, width, height, scale, buttons.len(), art_first)
         .into_iter()
         .zip(buttons)
     {
+        if let Some(frames) = button.start.as_ref().and_then(|s| s.frames.as_ref()) {
+            let start = button.start.as_ref().expect("checked above");
+            let mut draw = |frame: &Arc<Icon>, opacity: f32| {
+                icons.push(IconDraw {
+                    rect: fit(rect, frame.width, frame.height),
+                    icon: Arc::clone(frame),
+                    opacity,
+                });
+            };
+            if start.pressed {
+                draw(&frames[2], 1.0);
+            } else {
+                draw(&frames[0], 1.0);
+                if start.blend > 0.0 {
+                    draw(&frames[1], start.blend.min(1.0));
+                }
+            }
+            continue;
+        }
         let rect = if button.child && !edge.is_horizontal() {
             Rect {
                 left: rect.left + 14.0 * scale,
@@ -192,6 +248,24 @@ pub fn build_scene(
                 },
             },
         });
+        if button.start.is_some() {
+            let mark = icon_rect(rect, scale);
+            let half = (mark.right - mark.left) / 2.0;
+            let gap = scale.max(1.0);
+            for (col, row) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                let left = mark.left + col * half + if col > 0.0 { gap / 2.0 } else { 0.0 };
+                let top = mark.top + row * half + if row > 0.0 { gap / 2.0 } else { 0.0 };
+                fills.push(Fill {
+                    rect: Rect {
+                        left,
+                        top,
+                        right: left + half - gap / 2.0,
+                        bottom: top + half - gap / 2.0,
+                    },
+                    color: START_MARK,
+                });
+            }
+        }
         let dragged = button.drag == Drag::Source;
         if dragged {
             if let Some(fill) = fills.last_mut() {
@@ -305,6 +379,124 @@ mod tests {
         assert_eq!(v.labels[0].rect.top, 1050.0);
     }
 
+    fn start_button(start: Option<StartView>) -> ButtonView {
+        ButtonView {
+            title: "Start".into(),
+            active: false,
+            hovered: false,
+            minimized: false,
+            flashing: false,
+            title_changed: false,
+            child: false,
+            header: false,
+            drag: Drag::None,
+            start,
+            icon: None,
+        }
+    }
+
+    fn frame(id: u64) -> Arc<Icon> {
+        Arc::new(Icon {
+            id,
+            width: 10,
+            height: 10,
+            bgra: vec![0; 400],
+        })
+    }
+
+    fn art(blend: f32, pressed: bool) -> StartView {
+        StartView {
+            frames: Some([frame(1), frame(2), frame(3)]),
+            blend,
+            pressed,
+        }
+    }
+
+    #[test]
+    fn start_art_mixes_the_hot_frame_over_the_normal_one() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let at = |blend, pressed| {
+            build_scene(
+                Edge::Bottom,
+                800.0,
+                40.0,
+                1.0,
+                bg,
+                (1, 1),
+                &[start_button(Some(art(blend, pressed)))],
+            )
+        };
+        let calm = at(0.0, false);
+        assert_eq!(calm.icons.len(), 1);
+        assert_eq!(calm.icons[0].icon.id, 1);
+        assert_eq!(calm.fills.len(), 0);
+        let half = at(0.5, false);
+        assert_eq!(half.icons.len(), 2);
+        assert_eq!(
+            (
+                half.icons[0].opacity,
+                half.icons[1].icon.id,
+                half.icons[1].opacity
+            ),
+            (1.0, 2, 0.5)
+        );
+        let pressed = at(1.0, true);
+        assert_eq!(pressed.icons.len(), 1);
+        assert_eq!(pressed.icons[0].icon.id, 3);
+        let rect = calm.icons[0].rect;
+        assert_eq!(rect.right - rect.left, rect.bottom - rect.top);
+    }
+
+    #[test]
+    fn art_start_is_square_and_shifts_the_buttons() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let task = ButtonView {
+            title: "t".into(),
+            start: None,
+            ..start_button(None)
+        };
+        let with_art = build_scene(
+            Edge::Bottom,
+            800.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[start_button(Some(art(0.0, false))), task.clone()],
+        );
+        let without = build_scene(
+            Edge::Bottom,
+            800.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            std::slice::from_ref(&task),
+        );
+        assert!(with_art.fills[0].rect.left > without.fills[0].rect.left);
+    }
+
+    #[test]
+    fn the_drawn_start_button_has_four_squares_and_its_title() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let drawn = build_scene(
+            Edge::Bottom,
+            800.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[start_button(Some(StartView {
+                frames: None,
+                blend: 0.0,
+                pressed: false,
+            }))],
+        );
+        assert_eq!(drawn.fills.len(), 5);
+        assert_eq!(drawn.labels[1].text, "Start");
+        assert!(drawn.icons.is_empty());
+    }
+
     #[test]
     fn drag_marks_the_source_and_the_landing_side() {
         assert_eq!(Drag::of(1, 1, Some(3)), Drag::Source);
@@ -326,6 +518,7 @@ mod tests {
             child: false,
             header: false,
             drag,
+            start: None,
             icon: None,
         };
         let bg = Color::rgb(0.0, 0.0, 0.0);
@@ -390,6 +583,7 @@ mod tests {
                 child: false,
                 header: false,
                 drag: Drag::None,
+                start: None,
                 icon: None,
             },
             ButtonView {
@@ -402,6 +596,7 @@ mod tests {
                 child: false,
                 header: false,
                 drag: Drag::None,
+                start: None,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -425,6 +620,7 @@ mod tests {
             child: false,
             header: false,
             drag: Drag::None,
+            start: None,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
@@ -440,6 +636,7 @@ mod tests {
             child: false,
             header: false,
             drag: Drag::None,
+            start: None,
             icon: None,
         };
         let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);

@@ -9,10 +9,11 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use jtb_core::config::PinConfig;
-use jtb_core::config::{Action, Button, Config, Target};
+use jtb_core::config::{Action, Button, Config, StartConfig, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
-use jtb_core::scene::{ButtonView, Drag};
+use jtb_core::scene::{ButtonView, Drag, StartView};
+use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
 use jtb_core::Edge;
@@ -44,6 +45,9 @@ struct State {
     force_hide_explorer: bool,
 }
 
+/// Normal, hot and pressed frames of the Start button.
+type StartFrames = [Arc<Icon>; 3];
+
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     static CONTROL: Cell<Option<HWND>> = const { Cell::new(None) };
@@ -52,6 +56,7 @@ thread_local! {
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
+    static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -238,6 +243,7 @@ enum Click {
         windows: Vec<isize>,
         pin: Option<usize>,
     },
+    Start,
 }
 
 impl Click {
@@ -245,6 +251,7 @@ impl Click {
     fn key(&self) -> &str {
         match self {
             Click::Window { key, .. } | Click::Header { key, .. } => key,
+            Click::Start => "start",
         }
     }
 }
@@ -298,6 +305,85 @@ fn exe_icon(path: &str) -> Option<Arc<Icon>> {
     })
 }
 
+/// The Start button art, read once per configured file name; `None` gives the drawn button.
+fn start_frames(image: &str) -> Option<StartFrames> {
+    if image.trim().is_empty() {
+        return None;
+    }
+    START_ART.with_borrow_mut(|cache| {
+        if cache.as_ref().is_none_or(|(loaded, _)| loaded != image) {
+            *cache = Some((image.to_string(), load_start_art(image)));
+        }
+        cache.as_ref().and_then(|(_, frames)| frames.clone())
+    })
+}
+
+fn load_start_art(image: &str) -> Option<StartFrames> {
+    let path = if std::path::Path::new(image).is_absolute() {
+        PathBuf::from(image)
+    } else {
+        exe_sibling(image)?
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log(&format!("start art not read, drawing the button: {e}"));
+            return None;
+        }
+    };
+    let art = match startart::load(&bytes) {
+        Ok(art) => art,
+        Err(e) => {
+            log(&format!("start art ignored, drawing the button: {e}"));
+            return None;
+        }
+    };
+    log(&format!(
+        "start art loaded, frames {}x{}",
+        art.normal.width, art.normal.height
+    ));
+    let icon = |frame: startart::Frame| {
+        let id = NEXT_ICON_ID.get();
+        NEXT_ICON_ID.set(id + 1);
+        Arc::new(Icon {
+            id,
+            width: frame.width,
+            height: frame.height,
+            bgra: frame.bgra,
+        })
+    };
+    Some([icon(art.normal), icon(art.hot), icon(art.pressed)])
+}
+
+fn start_row(config: &StartConfig) -> (ButtonView, Click) {
+    let view = ButtonView {
+        title: config.label.clone(),
+        active: false,
+        hovered: false,
+        minimized: false,
+        flashing: false,
+        title_changed: false,
+        child: false,
+        header: false,
+        drag: Drag::None,
+        start: Some(StartView {
+            frames: start_frames(&config.image),
+            blend: 0.0,
+            pressed: false,
+        }),
+        icon: None,
+    };
+    (view, Click::Start)
+}
+
+fn run_start(config: &StartConfig) {
+    log(&format!(
+        "start button: {} {:?}",
+        config.command, config.args
+    ));
+    launch_app(&config.command, &config.args);
+}
+
 /// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.
 fn build_bar(
     monitor: Option<RECT>,
@@ -311,7 +397,7 @@ fn build_bar(
             s.order.clone(),
         )
     });
-    TASKS.with_borrow(|tasks| {
+    let mut bar = TASKS.with_borrow(|tasks| {
         let visible: Vec<Task> = tasks
             .items()
             .iter()
@@ -349,6 +435,7 @@ fn build_bar(
                         child,
                         header: false,
                         drag: Drag::None,
+                        start: None,
                         icon: icon_of(id),
                     };
                     let key = rules.group_of(&task).key;
@@ -378,6 +465,7 @@ fn build_bar(
                         child: false,
                         header: true,
                         drag: Drag::None,
+                        start: None,
                         icon: pin
                             .and_then(|i| pins.get(i))
                             .and_then(|p| exe_icon(&p.path))
@@ -386,8 +474,17 @@ fn build_bar(
                     (view, Click::Header { key, windows, pin })
                 }
             })
-            .collect()
-    })
+            .collect::<Vec<_>>()
+    });
+    if config.start.enabled {
+        bar.insert(0, start_row(&config.start));
+    }
+    bar
+}
+
+/// Whether the bars show a Start button.
+pub fn start_enabled() -> bool {
+    current_config().start.enabled
 }
 
 /// What the bar on `monitor` shows, one entry per button.
@@ -420,6 +517,7 @@ fn exe_of(id: isize) -> String {
 fn launch_click(click: &Click, pins: &[PinConfig]) {
     match click {
         Click::Window { id, .. } => launch_app(&exe_of(*id), &[]),
+        Click::Start => {}
         Click::Header { windows, pin, .. } => match pin.and_then(|i| pins.get(i)) {
             Some(pin) => launch_app(&pin.path, &pin.args),
             None => launch_app(
@@ -440,6 +538,12 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
     let target = match click {
         Click::Window { .. } => Target::Window,
         Click::Header { .. } => Target::Header,
+        Click::Start => {
+            if button == Button::Left {
+                run_start(&config.start);
+            }
+            return;
+        }
     };
     match config.mouse.action(target, button) {
         Action::None => {}
@@ -449,6 +553,7 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
                 Some(id) => tasks::activate_or_minimize(*id, false),
                 None => launch_click(&click, &pins),
             },
+            Click::Start => {}
         },
         Action::Launch => launch_click(&click, &pins),
         Action::ToggleFold => match &click {
@@ -466,6 +571,9 @@ pub fn reorder(monitor: Option<RECT>, from: usize, to: usize) {
     let (Some(source), Some(target)) = (bar.get(from), bar.get(to)) else {
         return;
     };
+    if matches!(source.1, Click::Start) || matches!(target.1, Click::Start) {
+        return;
+    }
     let (from_key, to_key) = (source.1.key().to_string(), target.1.key().to_string());
     if source.0.child {
         if let (Click::Window { id: from_id, .. }, Click::Window { id: to_id, .. }) =
@@ -553,6 +661,7 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 _ => {}
             }
         }
+        Click::Start => {}
         Click::Header { key, pin, .. } => {
             let items = [
                 ("Launch new", true),
