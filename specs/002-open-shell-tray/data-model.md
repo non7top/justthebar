@@ -12,11 +12,10 @@ All of this lives in `jtb-core` and is unit tested on Linux; `jtb-win` and `jtb-
 - `callback_message: u32` (what to send to the owner on a click)
 - `version: u32` (callback format: legacy, or version 4)
 - `hidden: bool` (the app asked for it not to show)
-- `seen: u64` (tick of the last time the owner was found alive)
 
 ## TrayIcons
 Ordered list in order of arrival.
-- `apply(change: TrayChange)`: `Add`, `Modify`, `Delete`, `SetVersion`. Add of an existing key updates it. Modify of an unknown key is an add.
+- `apply(change: TrayChange) -> bool`: `Set` (a notify add or modify: creates the icon if unknown, else updates only the fields the packet carried), `Delete`, `SetVersion`. Returns true when something drawn may have changed.
 - `drop_dead(alive: impl Fn(isize) -> bool)`: removes icons whose owner is gone.
 - `visible() -> impl Iterator<&TrayIcon>`
 

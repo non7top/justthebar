@@ -7,6 +7,7 @@ pub mod scene;
 pub mod startart;
 pub mod state;
 pub mod tasks;
+pub mod tray;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
