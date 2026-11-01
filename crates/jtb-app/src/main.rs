@@ -12,7 +12,7 @@ use jtb_core::config::PinConfig;
 use jtb_core::config::{Action, Button, Config, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
-use jtb_core::scene::ButtonView;
+use jtb_core::scene::{ButtonView, Drag};
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
 use jtb_core::Edge;
@@ -348,6 +348,7 @@ fn build_bar(
                         title_changed: tasks.has_new_title(id),
                         child,
                         header: false,
+                        drag: Drag::None,
                         icon: icon_of(id),
                     };
                     let key = rules.group_of(&task).key;
@@ -376,6 +377,7 @@ fn build_bar(
                         title_changed: !active && windows.iter().any(|id| tasks.has_new_title(*id)),
                         child: false,
                         header: true,
+                        drag: Drag::None,
                         icon: pin
                             .and_then(|i| pins.get(i))
                             .and_then(|p| exe_icon(&p.path))

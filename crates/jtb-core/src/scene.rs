@@ -54,6 +54,35 @@ pub struct Fill {
     pub color: Color,
 }
 
+/// The part a button plays in a drag in progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drag {
+    None,
+    /// The button being dragged; drawn faint.
+    Source,
+    /// A drop here lands before this button.
+    Before,
+    /// A drop here lands after this button.
+    After,
+}
+
+impl Drag {
+    /// What the `index`th button shows while button `from` is dragged over button `over`.
+    pub fn of(index: usize, from: usize, over: Option<usize>) -> Drag {
+        if index == from {
+            Drag::Source
+        } else if over == Some(index) {
+            if from < index {
+                Drag::After
+            } else {
+                Drag::Before
+            }
+        } else {
+            Drag::None
+        }
+    }
+}
+
 /// What one task button shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ButtonView {
@@ -70,6 +99,7 @@ pub struct ButtonView {
     pub child: bool,
     /// A group or pin header.
     pub header: bool,
+    pub drag: Drag,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -93,6 +123,17 @@ pub struct Scene {
 
 /// How faint a minimized window's icon and title are drawn.
 const MINIMIZED_OPACITY: f32 = 0.5;
+
+/// How faint the button under the mouse button is drawn while it is dragged.
+const DRAGGED_OPACITY: f32 = 0.4;
+
+/// The line that shows where a dragged button will land.
+const DROP_LINE: Color = Color {
+    r: 0.35,
+    g: 0.75,
+    b: 1.0,
+    a: 1.0,
+};
 
 pub fn clock_text(hour: u16, minute: u16) -> String {
     format!("{hour:02}:{minute:02}")
@@ -151,6 +192,41 @@ pub fn build_scene(
                 },
             },
         });
+        let dragged = button.drag == Drag::Source;
+        if dragged {
+            if let Some(fill) = fills.last_mut() {
+                fill.color.a *= DRAGGED_OPACITY;
+            }
+        }
+        let drop_line = match button.drag {
+            Drag::Before => Some(false),
+            Drag::After => Some(true),
+            _ => None,
+        };
+        if let Some(after) = drop_line {
+            let thick = 3.0 * scale;
+            fills.push(Fill {
+                rect: match (edge.is_horizontal(), after) {
+                    (true, false) => Rect {
+                        right: rect.left + thick,
+                        ..rect
+                    },
+                    (true, true) => Rect {
+                        left: rect.right - thick,
+                        ..rect
+                    },
+                    (false, false) => Rect {
+                        bottom: rect.top + thick,
+                        ..rect
+                    },
+                    (false, true) => Rect {
+                        top: rect.bottom - thick,
+                        ..rect
+                    },
+                },
+                color: DROP_LINE,
+            });
+        }
         let content = if button.title_changed {
             let (stripe, rest) = stripe_split(edge, rect, scale);
             fills.push(Fill {
@@ -161,7 +237,9 @@ pub fn build_scene(
         } else {
             rect
         };
-        let opacity = if button.minimized {
+        let opacity = if dragged {
+            DRAGGED_OPACITY
+        } else if button.minimized {
             MINIMIZED_OPACITY
         } else {
             1.0
@@ -228,6 +306,77 @@ mod tests {
     }
 
     #[test]
+    fn drag_marks_the_source_and_the_landing_side() {
+        assert_eq!(Drag::of(1, 1, Some(3)), Drag::Source);
+        assert_eq!(Drag::of(3, 1, Some(3)), Drag::After);
+        assert_eq!(Drag::of(0, 2, Some(0)), Drag::Before);
+        assert_eq!(Drag::of(2, 1, Some(3)), Drag::None);
+        assert_eq!(Drag::of(2, 1, None), Drag::None);
+    }
+
+    #[test]
+    fn a_drop_target_gets_a_line_on_its_landing_side() {
+        let view = |drag| ButtonView {
+            title: "t".into(),
+            active: false,
+            hovered: false,
+            minimized: false,
+            flashing: false,
+            title_changed: false,
+            child: false,
+            header: false,
+            drag,
+            icon: None,
+        };
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let plain = build_scene(
+            Edge::Bottom,
+            1920.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[view(Drag::None)],
+        );
+        let after = build_scene(
+            Edge::Bottom,
+            1920.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[view(Drag::After)],
+        );
+        assert_eq!(after.fills.len(), plain.fills.len() + 1);
+        let button = after.fills[0].rect;
+        let line = after.fills[1].rect;
+        assert_eq!(line.right, button.right);
+        assert_eq!(line.right - line.left, 3.0);
+        let before = build_scene(
+            Edge::Left,
+            240.0,
+            600.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[view(Drag::Before)],
+        );
+        assert_eq!(before.fills[1].rect.top, before.fills[0].rect.top);
+        assert_eq!(before.fills[1].rect.bottom - before.fills[1].rect.top, 3.0);
+        let source = build_scene(
+            Edge::Bottom,
+            1920.0,
+            40.0,
+            1.0,
+            bg,
+            (1, 1),
+            &[view(Drag::Source)],
+        );
+        assert!(source.fills[0].color.a < plain.fills[0].color.a);
+        assert_eq!(source.fills.len(), plain.fills.len());
+    }
+
+    #[test]
     fn each_button_gets_a_fill_and_a_label() {
         let bg = Color::rgb(0.0, 0.0, 0.0);
         let buttons = [
@@ -240,6 +389,7 @@ mod tests {
                 title_changed: false,
                 child: false,
                 header: false,
+                drag: Drag::None,
                 icon: None,
             },
             ButtonView {
@@ -251,6 +401,7 @@ mod tests {
                 title_changed: false,
                 child: false,
                 header: false,
+                drag: Drag::None,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -273,6 +424,7 @@ mod tests {
             title_changed: false,
             child: false,
             header: false,
+            drag: Drag::None,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
@@ -287,6 +439,7 @@ mod tests {
             title_changed: true,
             child: false,
             header: false,
+            drag: Drag::None,
             icon: None,
         };
         let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);

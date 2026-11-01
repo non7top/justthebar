@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use jtb_core::buttons::{hit_test, layout_buttons};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
-use jtb_core::scene::{build_scene, ButtonView, Color};
+use jtb_core::scene::{build_scene, ButtonView, Color, Drag};
 use jtb_ui::{D2dRenderer, Renderer};
 use jtb_win::appbar::AppBar;
 use windows::core::{w, Result};
@@ -261,7 +261,17 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let time = unsafe { GetLocalTime() };
-    let hover = BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).and_then(|b| b.hover));
+    let (hover, dragged_from) = BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| b.hwnd == hwnd)
+            .map(|b| {
+                (
+                    b.hover,
+                    b.press.filter(|_| b.dragging).map(|(from, _, _)| from),
+                )
+            })
+            .unwrap_or((None, None))
+    });
     let scene = build_scene(
         bar.edge(),
         width as f32,
@@ -274,6 +284,7 @@ fn paint(hwnd: HWND, bar: AppBar) {
             .enumerate()
             .map(|(i, view)| ButtonView {
                 hovered: hover == Some(i),
+                drag: dragged_from.map_or(Drag::None, |from| Drag::of(i, from, hover)),
                 ..view
             })
             .collect::<Vec<_>>(),
@@ -317,8 +328,11 @@ fn note_drag(hwnd: HWND, lparam: LPARAM) {
     BARS.with_borrow_mut(|bars| {
         if let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) {
             if let Some((_, px, py)) = bar.press {
-                if (x - px).abs() > 6 || (y - py).abs() > 6 {
+                if !bar.dragging && ((x - px).abs() > 6 || (y - py).abs() > 6) {
                     bar.dragging = true;
+                    unsafe {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
                 }
             }
         }
@@ -398,6 +412,9 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 let _ = ReleaseCapture();
                 if let Some(bar) = bar {
                     let (press, dragging) = set_press(hwnd, None);
+                    if dragging {
+                        let _ = InvalidateRect(Some(hwnd), None, false);
+                    }
                     let target = button_at(hwnd, bar, lparam);
                     let monitor = task_monitor_of(hwnd);
                     match press {
