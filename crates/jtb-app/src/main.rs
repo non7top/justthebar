@@ -277,11 +277,8 @@ fn save_state() {
     }
 }
 
-/// Pins from the config followed by the ones added from the bar.
 fn effective_pins(config: &Config) -> Vec<PinConfig> {
-    let mut pins = config.pins.clone();
-    UI_STATE.with_borrow(|s| pins.extend(s.pins.iter().cloned()));
-    pins
+    UI_STATE.with_borrow(|s| s.effective_pins(&config.pins))
 }
 
 /// The icon of an executable, loaded once.
@@ -542,17 +539,16 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
             }
         }
         Click::Header { key, pin, .. } => {
-            let own_pin = pin.filter(|i| *i >= config.pins.len());
             let items = [
                 ("Launch new", true),
                 ("Fold or unfold", true),
-                ("Unpin", own_pin.is_some()),
+                ("Unpin", pin.is_some()),
             ];
             match shell::popup_menu(hwnd, &items) {
                 Some(0) => launch_click(&click, &pins),
                 Some(1) => toggle_fold(key),
                 Some(2) => {
-                    if let Some(pin) = own_pin.and_then(|i| pins.get(i)) {
+                    if let Some(pin) = pin.and_then(|i| pins.get(i)) {
                         UI_STATE.with_borrow_mut(|s| s.remove_pin(&pin.path));
                         save_state();
                         bar::invalidate_all();

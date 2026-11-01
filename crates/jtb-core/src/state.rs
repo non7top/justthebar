@@ -12,6 +12,8 @@ pub struct State {
     pub order: Vec<String>,
     /// Pins added from the bar.
     pub pins: Vec<PinConfig>,
+    /// Paths of config pins the user removed from the bar.
+    pub unpinned: Vec<String>,
 }
 
 impl State {
@@ -63,12 +65,37 @@ impl State {
         {
             return false;
         }
+        self.unpinned.retain(|p| !p.eq_ignore_ascii_case(&pin.path));
         self.pins.push(pin);
         true
     }
 
+    /// Removes a pin from the bar, whether it came from the config or from the bar.
     pub fn remove_pin(&mut self, path: &str) {
         self.pins.retain(|p| !p.path.eq_ignore_ascii_case(path));
+        if !self.unpinned.iter().any(|p| p.eq_ignore_ascii_case(path)) {
+            self.unpinned.push(path.to_string());
+        }
+    }
+
+    /// The config pins that were not removed, then the pins added from the bar, one per path.
+    pub fn effective_pins(&self, config_pins: &[PinConfig]) -> Vec<PinConfig> {
+        let mut pins: Vec<PinConfig> = config_pins
+            .iter()
+            .filter(|p| {
+                !self
+                    .unpinned
+                    .iter()
+                    .any(|u| u.eq_ignore_ascii_case(&p.path))
+            })
+            .cloned()
+            .collect();
+        for pin in &self.pins {
+            if !pins.iter().any(|p| p.path.eq_ignore_ascii_case(&pin.path)) {
+                pins.push(pin.clone());
+            }
+        }
+        pins
     }
 }
 
@@ -161,6 +188,23 @@ mod tests {
         }));
         state.remove_pin(r"C:\A.exe");
         assert!(state.pins.is_empty());
+    }
+
+    #[test]
+    fn a_config_pin_can_be_hidden_and_pinned_again() {
+        let config_pin = PinConfig {
+            name: "n".into(),
+            path: r"C:\a.exe".into(),
+            args: vec![],
+        };
+        let config_pins = [config_pin.clone()];
+        let mut state = State::default();
+        assert_eq!(state.effective_pins(&config_pins), vec![config_pin.clone()]);
+        state.remove_pin(r"c:\A.EXE");
+        assert!(state.effective_pins(&config_pins).is_empty());
+        assert!(state.add_pin(config_pin.clone()));
+        assert!(state.unpinned.is_empty());
+        assert_eq!(state.effective_pins(&config_pins), vec![config_pin]);
     }
 
     #[test]

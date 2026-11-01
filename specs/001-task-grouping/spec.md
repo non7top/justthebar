@@ -42,7 +42,7 @@ Dragging a task button, header or pin moves it to another position on the bar. D
 - **FR-002**: Group key is the lowercase exe path, or the custom group the exe belongs to. UWP windows hosted by ApplicationFrameHost are never grouped together.
 - **FR-003**: Mouse actions are a table (button, target) to action (`activate`, `launch`, `toggle_fold`, `none`), defaults as in US1, overridable in config.
 - **FR-004**: `grouping.mode` is `accordion` (default) or `off`; `off` restores plain buttons.
-- **FR-005**: Fold state, order and drag-added pins live in `jtb.state.json` next to the exe; `jtb.json` is never rewritten by the app.
+- **FR-005**: Fold state, order, drag-added pins and hidden config pins live in `jtb.state.json` next to the exe; `jtb.json` is never rewritten by the app.
 - **FR-006**: A header stands for its group: active if any member is, flashing if any flashes, title-changed if any changed and none is active, dimmed when all members are minimized or the pin has no windows.
 - **FR-007**: Pins and custom groups are validated at load; a bad file keeps the last good config.
 
