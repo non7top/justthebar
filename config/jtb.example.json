@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hide_explorer_taskbar": false,
+  "bars": [
+    { "monitor": "primary", "edge": "bottom", "size": 40, "enabled": true }
+  ],
+  "appearance": {
+    "bar_color": "#171a1f"
+  },
+  "tasks": {
+    "per_monitor": true
+  },
+  "grouping": {
+    "mode": "off"
+  },
+  "pins": [],
+  "groups": []
+}

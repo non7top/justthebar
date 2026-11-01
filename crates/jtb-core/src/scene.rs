@@ -16,6 +16,19 @@ impl Color {
     pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
         Color { r, g, b, a: 1.0 }
     }
+
+    /// Parses `#rrggbb`.
+    pub fn from_hex(text: &str) -> Result<Color, String> {
+        let digits = text
+            .strip_prefix('#')
+            .filter(|d| d.len() == 6 && d.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| format!("color must look like #rrggbb, got \"{text}\""))?;
+        let channel = |i: usize| {
+            let value = u8::from_str_radix(&digits[i..i + 2], 16).unwrap_or(0);
+            f32::from(value) / 255.0
+        };
+        Ok(Color::rgb(channel(0), channel(2), channel(4)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,6 +185,15 @@ pub fn build_scene(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_colors() {
+        assert_eq!(Color::from_hex("#ff0000"), Ok(Color::rgb(1.0, 0.0, 0.0)));
+        assert_eq!(Color::from_hex("#00FF00"), Ok(Color::rgb(0.0, 1.0, 0.0)));
+        assert!(Color::from_hex("ff0000").is_err());
+        assert!(Color::from_hex("#fff").is_err());
+        assert!(Color::from_hex("#gg0000").is_err());
+    }
 
     #[test]
     fn clock_is_zero_padded() {

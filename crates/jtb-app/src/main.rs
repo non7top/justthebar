@@ -176,7 +176,7 @@ fn apply(config: &Config, force_hide_explorer: bool) {
             )),
         }
     }
-    bar::build(planned, hide && !explorer::autohide_active());
+    bar::build(planned, hide && !explorer::autohide_active(), config);
 }
 
 fn current_settings() -> Option<(Config, bool)> {

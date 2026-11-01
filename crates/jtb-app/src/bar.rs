@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use jtb_core::buttons::{hit_test, layout_buttons};
-use jtb_core::config::BarConfig;
+use jtb_core::config::{BarConfig, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, ButtonView, Color};
 use jtb_ui::{D2dRenderer, Renderer};
@@ -24,12 +24,13 @@ use crate::log;
 
 const VK_ESCAPE: usize = 0x1B;
 const WM_MOUSELEAVE: u32 = 0x02A3;
-const BAR_COLOR: Color = Color::rgb(0.09, 0.10, 0.12);
 
 struct BarWindow {
     hwnd: HWND,
     bar: AppBar,
-    monitor: RECT,
+    background: Color,
+    /// Show only the windows on this monitor; `None` shows all.
+    task_monitor: Option<RECT>,
     /// Button under the mouse, and whether a `WM_MOUSELEAVE` is already requested.
     hover: Option<usize>,
     tracking: bool,
@@ -65,7 +66,7 @@ pub fn register_class() -> Result<()> {
 /// monitor's dpi; only then are thicknesses known and the corners can be shared out.
 /// With `flush`, bars sit at the monitor edge even though the system keeps Explorer's hidden
 /// taskbar space reserved there; that strip cannot be reclaimed (SPI_SETWORKAREA is refused).
-pub fn build(planned: Vec<Planned>, flush: bool) {
+pub fn build(planned: Vec<Planned>, flush: bool, config: &Config) {
     let mut windows = Vec::new();
     for plan in planned {
         match create_window(&plan) {
@@ -115,7 +116,8 @@ pub fn build(planned: Vec<Planned>, flush: bool) {
             bars.push(BarWindow {
                 hwnd,
                 bar,
-                monitor: plan.monitor_rect,
+                background: config.appearance.bar_color.0,
+                task_monitor: config.tasks.per_monitor.then_some(plan.monitor_rect),
                 hover: None,
                 tracking: false,
                 renderer,
@@ -197,8 +199,20 @@ fn bar_for(hwnd: HWND) -> Option<AppBar> {
     BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).map(|b| b.bar))
 }
 
-fn monitor_of(hwnd: HWND) -> Option<RECT> {
-    BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).map(|b| b.monitor))
+fn task_monitor_of(hwnd: HWND) -> Option<RECT> {
+    BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| b.hwnd == hwnd)
+            .and_then(|b| b.task_monitor)
+    })
+}
+
+fn background_of(hwnd: HWND) -> Color {
+    BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| b.hwnd == hwnd)
+            .map_or(Color::rgb(0.0, 0.0, 0.0), |b| b.background)
+    })
 }
 
 fn client_size(hwnd: HWND) -> (u32, u32) {
@@ -244,9 +258,9 @@ fn paint(hwnd: HWND, bar: AppBar) {
         width as f32,
         height as f32,
         scale,
-        BAR_COLOR,
+        background_of(hwnd),
         (time.wHour, time.wMinute),
-        &crate::bar_tasks(monitor_of(hwnd))
+        &crate::bar_tasks(task_monitor_of(hwnd))
             .into_iter()
             .enumerate()
             .map(|(i, (_, view))| ButtonView {
@@ -263,14 +277,14 @@ fn button_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
     let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let count = crate::bar_tasks(monitor_of(hwnd)).len();
+    let count = crate::bar_tasks(task_monitor_of(hwnd)).len();
     let rects = layout_buttons(bar.edge(), width as f32, height as f32, scale, count);
     hit_test(&rects, x, y)
 }
 
 fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM) {
     if let Some(index) = button_at(hwnd, bar, lparam) {
-        crate::click_task(monitor_of(hwnd), index);
+        crate::click_task(task_monitor_of(hwnd), index);
     }
 }
 
