@@ -7,6 +7,8 @@ const BUTTON_MAX_LONG: f32 = 180.0;
 const BUTTON_VERTICAL_LONG: f32 = 30.0;
 const PAD: f32 = 4.0;
 const GAP: f32 = 2.0;
+/// The Start button art stops growing here, so a thick side bar does not get a giant orb.
+const START_MAX_SIDE: f32 = 54.0;
 
 /// The clock sits at the far end of the bar. `scale` is dpi / 96.
 pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
@@ -47,16 +49,19 @@ pub fn layout_rows(
         return layout_buttons(edge, width, height, scale, count);
     }
     let pad = PAD * scale;
-    let side = if edge.is_horizontal() {
-        (height - 2.0 * pad).max(0.0)
+    let thickness = if edge.is_horizontal() { height } else { width };
+    let side = (thickness - 2.0 * pad).clamp(0.0, START_MAX_SIDE * scale);
+    let across = (thickness - side) / 2.0;
+    let (left, top) = if edge.is_horizontal() {
+        (pad, across)
     } else {
-        (width - 2.0 * pad).max(0.0)
+        (across, pad)
     };
     let first = Rect {
-        left: pad,
-        top: pad,
-        right: pad + side,
-        bottom: pad + side,
+        left,
+        top,
+        right: left + side,
+        bottom: top + side,
     };
     let mut rects = vec![first];
     rects.extend(layout_from(
@@ -246,6 +251,18 @@ mod tests {
         assert_eq!(side[0].right - side[0].left, 32.0);
         assert!(side[1].top >= side[0].bottom);
         assert!(layout_rows(Edge::Left, 40.0, 600.0, 1.0, 0, true).is_empty());
+    }
+
+    #[test]
+    fn the_square_first_button_stops_growing_and_is_centered_on_a_thick_bar() {
+        let rows = layout_rows(Edge::Right, 200.0, 1080.0, 1.0, 2, true);
+        assert_eq!(rows[0].right - rows[0].left, 54.0);
+        assert_eq!(rows[0].bottom - rows[0].top, 54.0);
+        assert_eq!(rows[0].left, 73.0);
+        assert!(rows[1].top >= rows[0].bottom);
+        let scaled = layout_rows(Edge::Bottom, 1920.0, 200.0, 2.0, 2, true);
+        assert_eq!(scaled[0].bottom - scaled[0].top, 108.0);
+        assert_eq!(scaled[0].top, 46.0);
     }
 
     #[test]
