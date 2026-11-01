@@ -18,11 +18,11 @@ use windows::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo,
     GetPropW, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, RegisterShellHookWindow, RegisterWindowMessageW,
+    IsWindow, IsWindowVisible, PostMessageW, RegisterShellHookWindow, RegisterWindowMessageW,
     SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, GCLP_HICON, GCLP_HICONSM,
     GWL_EXSTYLE, GW_OWNER, HICON, ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG,
-    SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, WM_GETICON, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, WM_CLOSE, WM_GETICON, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
 };
 
 // Shell hook codes (wParam of the SHELLHOOK message; lParam is the window).
@@ -182,6 +182,13 @@ pub fn register_shell_hook(hwnd: HWND) -> u32 {
     unsafe {
         let _ = RegisterShellHookWindow(hwnd);
         RegisterWindowMessageW(w!("SHELLHOOK"))
+    }
+}
+
+/// Asks the window to close, as its close button would.
+pub fn close(id: isize) {
+    unsafe {
+        let _ = PostMessageW(Some(hwnd_of(id)), WM_CLOSE, WPARAM(0), LPARAM(0));
     }
 }
 
