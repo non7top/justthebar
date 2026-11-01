@@ -3,6 +3,8 @@
 pub struct Task {
     pub id: isize,
     pub title: String,
+    /// Full path of the window's executable; empty when it could not be read.
+    pub exe: String,
 }
 
 /// The windows on the taskbar in creation order, and which one is active.
@@ -36,7 +38,11 @@ impl Tasks {
                 }
                 task.title = title;
             }
-            None => self.items.push(Task { id, title }),
+            None => self.items.push(Task {
+                id,
+                title,
+                exe: String::new(),
+            }),
         }
     }
 
@@ -65,6 +71,16 @@ impl Tasks {
         }
     }
 
+    pub fn get(&self, id: isize) -> Option<&Task> {
+        self.items.iter().find(|t| t.id == id)
+    }
+
+    pub fn set_exe(&mut self, id: isize, exe: String) {
+        if let Some(task) = self.items.iter_mut().find(|t| t.id == id) {
+            task.exe = exe;
+        }
+    }
+
     pub fn contains(&self, id: isize) -> bool {
         self.items.iter().any(|t| t.id == id)
     }
@@ -85,6 +101,7 @@ impl Tasks {
             .retain(|f| tasks.iter().any(|n| n.id == *f));
         for task in tasks {
             self.upsert(task.id, task.title);
+            self.set_exe(task.id, task.exe);
         }
         if self.active.is_some_and(|id| !self.contains(id)) {
             self.active = None;
@@ -100,6 +117,7 @@ mod tests {
         Task {
             id,
             title: title.to_string(),
+            exe: String::new(),
         }
     }
 

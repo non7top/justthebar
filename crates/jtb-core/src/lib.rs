@@ -1,5 +1,6 @@
 pub mod buttons;
 pub mod config;
+pub mod grouping;
 pub mod icon;
 pub mod layout;
 pub mod scene;

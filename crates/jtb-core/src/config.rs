@@ -97,15 +97,16 @@ impl Default for TasksConfig {
     }
 }
 
-/// Reserved: parsed so config files stay valid, not applied yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GroupingMode {
-    #[default]
+    /// One plain button per window.
     Off,
+    /// Windows of one app share a header button that folds.
+    #[default]
+    Accordion,
 }
 
-/// Reserved: parsed so config files stay valid, not applied yet.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GroupingConfig {
@@ -253,7 +254,7 @@ mod tests {
     fn rejects_bad_input() {
         assert!(Config::parse(r#"{"version": 2}"#).is_err());
         assert!(Config::parse(r##"{"appearance": {"bar_color": "red"}}"##).is_err());
-        assert!(Config::parse(r#"{"grouping": {"mode": "accordion"}}"#).is_err());
+        assert!(Config::parse(r#"{"grouping": {"mode": "stack"}}"#).is_err());
         assert!(Config::parse(r#"{"tasks": {"permonitor": true}}"#).is_err());
         assert!(Config::parse("{").is_err());
         assert!(Config::parse(r#"{"bars": [{"edge": "middle"}]}"#).is_err());

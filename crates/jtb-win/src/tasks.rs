@@ -95,6 +95,7 @@ unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
         list.push(Task {
             id,
             title: title(id),
+            exe: String::new(),
         });
     }
     BOOL(1)

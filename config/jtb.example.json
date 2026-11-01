@@ -11,7 +11,7 @@
     "per_monitor": true
   },
   "grouping": {
-    "mode": "off"
+    "mode": "accordion"
   },
   "pins": [],
   "groups": []
