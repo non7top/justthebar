@@ -48,6 +48,7 @@ thread_local! {
     static EXPLORER_HIDDEN: Cell<bool> = const { Cell::new(false) };
     static TASKS: RefCell<Tasks> = RefCell::new(Tasks::default());
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
+    static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static FOLDED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
@@ -224,6 +225,23 @@ fn poll_config() {
     }
 }
 
+/// The icon of an executable, loaded once.
+fn exe_icon(path: &str) -> Option<Arc<Icon>> {
+    EXE_ICONS.with_borrow_mut(|cache| {
+        cache
+            .entry(path.to_string())
+            .or_insert_with(|| {
+                let id = NEXT_ICON_ID.get();
+                let icon = tasks::exe_icon(path, id).map(Arc::new);
+                if icon.is_some() {
+                    NEXT_ICON_ID.set(id + 1);
+                }
+                icon
+            })
+            .clone()
+    })
+}
+
 /// What a bar button stands for.
 enum Click {
     Window(isize),
@@ -302,7 +320,10 @@ fn build_bar(monitor: Option<RECT>, config: &Config) -> Vec<(ButtonView, Click)>
                         title_changed: !active && windows.iter().any(|id| tasks.has_new_title(*id)),
                         child: false,
                         header: true,
-                        icon: windows.first().and_then(|id| icon_of(*id)),
+                        icon: pin
+                            .and_then(|i| config.pins.get(i))
+                            .and_then(|p| exe_icon(&p.path))
+                            .or_else(|| windows.first().and_then(|id| icon_of(*id))),
                     };
                     (view, Click::Header { key, windows, pin })
                 }

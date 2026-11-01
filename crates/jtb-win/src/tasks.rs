@@ -14,15 +14,15 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo, GetPropW,
-    GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, RegisterShellHookWindow, RegisterWindowMessageW, SendMessageTimeoutW,
-    SetForegroundWindow, ShowWindowAsync, GCLP_HICON, GCLP_HICONSM, GWL_EXSTYLE, GW_OWNER, HICON,
-    ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
-    SW_SHOWNORMAL, WM_GETICON, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_WINDOWEDGE,
+    DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo,
+    GetPropW, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindow, IsWindowVisible, RegisterShellHookWindow, RegisterWindowMessageW,
+    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, GCLP_HICON, GCLP_HICONSM,
+    GWL_EXSTYLE, GW_OWNER, HICON, ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, WM_GETICON, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
 };
 
 // Shell hook codes (wParam of the SHELLHOOK message; lParam is the window).
@@ -304,4 +304,19 @@ fn decode_icon(hicon: HICON, icon_id: u64) -> Option<Icon> {
 /// Loads the window's icon as pixels, tagged with `icon_id`.
 pub fn icon(id: isize, icon_id: u64) -> Option<Icon> {
     decode_icon(icon_handle(hwnd_of(id))?, icon_id)
+}
+
+/// The icon of an executable or file, tagged with `icon_id`.
+pub fn exe_icon(path: &str, icon_id: u64) -> Option<Icon> {
+    let file = HSTRING::from(path);
+    let mut large = HICON::default();
+    let count = unsafe { ExtractIconExW(&file, 0, Some(&mut large), None, 1) };
+    if count == 0 || large.is_invalid() {
+        return None;
+    }
+    let icon = decode_icon(large, icon_id);
+    unsafe {
+        let _ = DestroyIcon(large);
+    }
+    icon
 }
