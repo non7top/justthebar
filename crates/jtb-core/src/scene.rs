@@ -49,6 +49,8 @@ pub struct ButtonView {
     pub hovered: bool,
     /// Folded down to the taskbar; drawn dimmed.
     pub minimized: bool,
+    /// Asking for attention; drawn in the flash color.
+    pub flashing: bool,
     pub icon: Option<Arc<Icon>>,
 }
 
@@ -102,15 +104,21 @@ pub fn build_scene(
     {
         fills.push(Fill {
             rect,
-            color: match (button.active, button.hovered) {
-                (true, hovered) => Color {
+            color: match (button.active, button.flashing, button.hovered) {
+                (true, _, hovered) => Color {
                     r: 0.25,
                     g: 0.55,
                     b: 1.0,
                     a: if hovered { 0.90 } else { 0.75 },
                 },
-                (false, true) => Color { a: 0.22, ..white },
-                (false, false) => Color { a: 0.10, ..white },
+                (false, true, hovered) => Color {
+                    r: 0.95,
+                    g: 0.55,
+                    b: 0.10,
+                    a: if hovered { 0.95 } else { 0.80 },
+                },
+                (false, false, true) => Color { a: 0.22, ..white },
+                (false, false, false) => Color { a: 0.10, ..white },
             },
         });
         let opacity = if button.minimized {
@@ -179,6 +187,7 @@ mod tests {
                 active: false,
                 hovered: false,
                 minimized: false,
+                flashing: false,
                 icon: None,
             },
             ButtonView {
@@ -186,6 +195,7 @@ mod tests {
                 active: true,
                 hovered: true,
                 minimized: false,
+                flashing: false,
                 icon: Some(Arc::new(Icon {
                     id: 1,
                     width: 1,
@@ -204,11 +214,22 @@ mod tests {
             active: true,
             hovered: false,
             minimized: true,
+            flashing: false,
             icon: None,
         };
         let calm = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[plain]);
         assert!(scene.fills[1].color.a > calm.fills[0].color.a);
         assert!(calm.labels[1].color.a < scene.labels[2].color.a);
+        let flash = ButtonView {
+            title: "three".into(),
+            active: false,
+            hovered: false,
+            minimized: false,
+            flashing: true,
+            icon: None,
+        };
+        let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash]);
+        assert!(flashing.fills[0].color.r > flashing.fills[0].color.b);
         assert!(scene.labels[1].leading);
         assert!(!scene.labels[0].leading);
     }

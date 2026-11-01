@@ -10,6 +10,7 @@ pub struct Task {
 pub struct Tasks {
     items: Vec<Task>,
     active: Option<isize>,
+    flashing: Vec<isize>,
 }
 
 impl Tasks {
@@ -29,7 +30,20 @@ impl Tasks {
         }
     }
 
+    pub fn is_flashing(&self, id: isize) -> bool {
+        self.flashing.contains(&id)
+    }
+
+    /// Marks the window as asking for attention. The active window never flashes.
+    pub fn set_flashing(&mut self, id: isize, flashing: bool) {
+        self.flashing.retain(|f| *f != id);
+        if flashing && self.active != Some(id) {
+            self.flashing.push(id);
+        }
+    }
+
     pub fn remove(&mut self, id: isize) {
+        self.flashing.retain(|f| *f != id);
         self.items.retain(|t| t.id != id);
         if self.active == Some(id) {
             self.active = None;
@@ -42,11 +56,15 @@ impl Tasks {
 
     pub fn set_active(&mut self, id: Option<isize>) {
         self.active = id;
+        if let Some(id) = id {
+            self.flashing.retain(|f| *f != id);
+        }
     }
 
     /// Replaces the list, keeping the order of windows that were already listed.
     pub fn replace_all(&mut self, tasks: Vec<Task>) {
         self.items.retain(|t| tasks.iter().any(|n| n.id == t.id));
+        self.flashing.retain(|f| tasks.iter().any(|n| n.id == *f));
         for task in tasks {
             self.upsert(task.id, task.title);
         }
@@ -84,6 +102,18 @@ mod tests {
         tasks.remove(1);
         assert!(tasks.items().is_empty());
         assert_eq!(tasks.active(), None);
+    }
+
+    #[test]
+    fn activating_a_flashing_window_stops_the_flash() {
+        let mut tasks = Tasks::default();
+        tasks.upsert(1, "one".into());
+        tasks.set_flashing(1, true);
+        assert!(tasks.is_flashing(1));
+        tasks.set_active(Some(1));
+        assert!(!tasks.is_flashing(1));
+        tasks.set_flashing(1, true);
+        assert!(!tasks.is_flashing(1));
     }
 
     #[test]

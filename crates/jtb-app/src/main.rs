@@ -239,6 +239,7 @@ pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
                     active: tasks.active() == Some(task.id),
                     hovered: false,
                     minimized: tasks::is_minimized(task.id),
+                    flashing: tasks.is_flashing(task.id),
                     icon: ICONS.with_borrow(|icons| icons.get(&task.id).cloned().flatten()),
                 };
                 (task.id, view)
@@ -290,7 +291,14 @@ fn refresh_icons() {
 
 fn on_shell_hook(code: usize, id: isize) {
     TASKS.with_borrow_mut(|list| match code {
+        tasks::HSHELL_FLASH => {
+            if tasks::is_taskbar_window(id) {
+                list.upsert(id, tasks::title(id));
+                list.set_flashing(id, true);
+            }
+        }
         tasks::HSHELL_WINDOWCREATED | tasks::HSHELL_REDRAW => {
+            list.set_flashing(id, false);
             if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
             } else {
