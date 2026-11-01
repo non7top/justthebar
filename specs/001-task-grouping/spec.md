@@ -1,7 +1,7 @@
 # Feature Specification: Task grouping, pins and drag and drop
 
 **Created**: 2026-10-31
-**Status**: Draft, implemented in order of priority
+**Status**: Implemented, waiting for testing on Windows
 **Input**: accordion grouping of task buttons, same-app and custom groups, pins that launch and group, drag and drop, groups that mix different executables.
 
 ## User Scenarios
