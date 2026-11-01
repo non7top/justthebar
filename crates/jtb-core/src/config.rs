@@ -155,6 +155,15 @@ impl Default for StartConfig {
     }
 }
 
+/// The notification area: when enabled we own the `Shell_TrayWnd` role and show the icons on
+/// bar number `bar`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TrayConfig {
+    pub enabled: bool,
+    pub bar: usize,
+}
+
 /// What a click does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -225,6 +234,7 @@ pub struct Config {
     pub grouping: GroupingConfig,
     pub mouse: MouseConfig,
     pub start: StartConfig,
+    pub tray: TrayConfig,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
 }
@@ -240,6 +250,7 @@ impl Default for Config {
             grouping: GroupingConfig::default(),
             mouse: MouseConfig::default(),
             start: StartConfig::default(),
+            tray: TrayConfig::default(),
             pins: Vec::new(),
             groups: Vec::new(),
         }
@@ -267,6 +278,13 @@ impl Config {
         }
         if config.start.enabled && config.start.command.trim().is_empty() {
             return Err("the start button needs a command".to_string());
+        }
+        if config.tray.enabled && config.tray.bar >= config.bars.len() {
+            return Err(format!(
+                "tray.bar is {} but there are only {} bars",
+                config.tray.bar,
+                config.bars.len()
+            ));
         }
         for bar in &config.bars {
             if bar.size == 0 || bar.size > 1000 {
@@ -324,6 +342,7 @@ mod tests {
         assert_eq!(config.version, CONFIG_VERSION);
         assert_eq!(config.appearance, Appearance::default());
         assert_eq!(config.start, StartConfig::default());
+        assert_eq!(config.tray, TrayConfig::default());
         assert_eq!(config.tasks, TasksConfig::default());
         assert_eq!(config.grouping, GroupingConfig::default());
         assert_eq!(config.mouse, MouseConfig::default());
@@ -383,6 +402,16 @@ mod tests {
         assert!(Config::parse(r#"{"start": {"enabled": true, "command": " "}}"#).is_err());
         assert!(Config::parse(r#"{"start": {"enabled": false, "command": ""}}"#).is_ok());
         assert!(Config::parse(r#"{"start": {"colour": "red"}}"#).is_err());
+    }
+
+    #[test]
+    fn tray_defaults_off_and_needs_a_real_bar() {
+        assert!(!Config::parse("{}").unwrap().tray.enabled);
+        let on = r#"{"tray": {"enabled": true, "bar": 0}}"#;
+        assert!(Config::parse(on).unwrap().tray.enabled);
+        assert!(Config::parse(r#"{"tray": {"enabled": true, "bar": 1}}"#).is_err());
+        assert!(Config::parse(r#"{"tray": {"enabled": false, "bar": 5}}"#).is_ok());
+        assert!(Config::parse(r#"{"tray": {"icons": 1}}"#).is_err());
     }
 
     #[test]

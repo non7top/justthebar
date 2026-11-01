@@ -26,6 +26,10 @@
     "label": "Start",
     "image": "start-button.png"
   },
+  "tray": {
+    "enabled": false,
+    "bar": 0
+  },
   "pins": [],
   "groups": []
 }
