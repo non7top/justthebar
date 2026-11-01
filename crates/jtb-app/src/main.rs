@@ -16,8 +16,10 @@ use jtb_core::scene::{ButtonView, Drag, StartView};
 use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
+use jtb_core::tray::TrayIcons;
+use jtb_core::traypacket;
 use jtb_core::Edge;
-use jtb_win::{explorer, monitors, shell, tasks};
+use jtb_win::{explorer, monitors, shell, tasks, tray};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -56,6 +58,7 @@ thread_local! {
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
+    static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
     static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
@@ -127,6 +130,9 @@ impl Drop for ExplorerGuard {
             let state = explorer::restore();
             log(&format!("explorer restored, state={state}"));
         }
+        if tray::give_back(false) {
+            log("tray: role given back on exit");
+        }
     }
 }
 
@@ -187,6 +193,48 @@ fn apply(config: &Config, force_hide_explorer: bool) {
         }
     }
     bar::build(planned, hide && !explorer::autohide_active(), config);
+    sync_tray(config.tray.enabled);
+}
+
+/// Takes or gives back the tray role to match the config.
+fn sync_tray(enabled: bool) {
+    if enabled == tray::is_active() {
+        return;
+    }
+    if enabled {
+        match tray::create(on_tray_packet) {
+            Ok(()) => log("tray: role taken, Explorer's Shell_TrayWnd sent to the bottom"),
+            Err(e) => log(&format!("tray: could not take the role: {e}")),
+        }
+    } else {
+        tray::give_back(false);
+        TRAY_ICONS.with_borrow_mut(|icons| *icons = TrayIcons::default());
+        log("tray: role given back");
+    }
+}
+
+/// A notify icon packet from the tray window. Returns whether it was taken.
+fn on_tray_packet(data: &[u8]) -> bool {
+    let Some(packet) = traypacket::parse_notify(data) else {
+        log(&format!("tray: packet of {} bytes ignored", data.len()));
+        return false;
+    };
+    let owner = tasks::process_path(packet.hwnd)
+        .and_then(|path| path.rsplit('\\').next().map(str::to_string))
+        .unwrap_or_default();
+    let valid = packet.is_valid();
+    let changes = packet.changes(None);
+    let total = TRAY_ICONS.with_borrow_mut(|icons| {
+        for change in changes {
+            icons.apply(change);
+        }
+        icons.len()
+    });
+    log(&format!(
+        "tray: message={} owner={owner} id={} flags={:#x} tip={:?} valid={valid} icons={total}",
+        packet.message, packet.id, packet.flags, packet.tip
+    ));
+    valid
 }
 
 fn current_settings() -> Option<(Config, bool)> {
@@ -778,6 +826,8 @@ fn main() -> Result<()> {
     if args.restore_explorer {
         let state = explorer::restore();
         log(&format!("explorer restored, state={state}"));
+        tray::give_back(true);
+        log("tray: sent TaskbarCreated");
         return Ok(());
     }
 
@@ -877,7 +927,12 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         }
                     });
                 }
-                TIMER_ZORDER => bar::keep_above_explorer(),
+                TIMER_ZORDER => {
+                    bar::keep_above_explorer();
+                    if tray::keep_on_top() {
+                        log("tray: raised our Shell_TrayWnd");
+                    }
+                }
                 TIMER_CONFIG => poll_config(),
                 TIMER_QUIT => {
                     unsafe {
