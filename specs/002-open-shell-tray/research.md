@@ -18,6 +18,8 @@ Finding (read in `StartMenu.cpp`): `StartMenu.exe -toggle` and `-open` are comma
 
 Decision: the Start button runs `StartMenu.exe -toggle` from a configurable path (default `C:\Program Files\Open-Shell\StartMenu.exe`, it exists on this machine).
 
+Open-Shell has a setting `AlignToWorkArea` ("Align the start menu to the working area instead of to the taskbar. Use with custom taskbars", string found in the installed `StartMenuDLL.dll`; Menu Look tab, "Show all settings"). It is the expected fix for the menu position below, and the user turns it on in Open-Shell's settings. Names that circulate for this (`OpenShell.Command`, `OpenShellMenu.ClassicStartMenu`) appear in neither the v4.4.198 source nor the installed binaries; the real ones are `OpenShellMenu.StartMenuMsg` (posted to Explorer's taskbar) and the hook window class `OpenShellMenu.CStartHookWindow` (`WM_OPEN` = `WM_USER+10`). Running `StartMenu.exe -toggle` already does this, so we do not post those messages ourselves.
+
 Unverified: where the menu opens when the Explorer taskbar is hidden. To check on Windows; if it opens at the wrong place, try `-open`, then fall back to sending the Win key.
 
 ## R3: How do apps find the tray?

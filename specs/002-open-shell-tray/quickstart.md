@@ -2,6 +2,7 @@
 
 Prerequisites: Open-Shell installed (Start button and Win key work with the Explorer taskbar visible), `make build && make deploy`, `jtb.json` with `"start": {"enabled": true}` and later `"tray": {"enabled": true, "bar": 0}`.
 
+0. In Open-Shell's settings (Show all settings, Menu Look) enable "Align start menu to working area".
 1. **Start button**: run `4-bars-from-config.cmd`. Click the Start button on the bar: the Open-Shell menu opens. Note where it opens; press the Win key and compare. (spec US1)
 2. **Tray off**: with `tray.enabled` false nothing about the tray changes; Explorer keeps its tray.
 3. **Tray on**: set `tray.enabled` true, save. A tray app's icon (for example a sync client) shows on bar 0 within a second. Hover for the tooltip, right click for the app's menu. (US2, US3)
