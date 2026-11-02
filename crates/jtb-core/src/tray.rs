@@ -129,17 +129,21 @@ pub enum TrayChange {
 #[derive(Debug, Default)]
 pub struct TrayIcons {
     items: Vec<TrayIcon>,
+    /// Icons an app deleted and has not added again.
+    deleted: Vec<TrayKey>,
 }
 
 impl TrayIcons {
-    pub fn contains(&self, key: TrayKey) -> bool {
-        self.items.iter().any(|i| i.key == key)
+    /// True while `key` was deleted by its app and not added again: a modify for it is stale.
+    pub fn was_deleted(&self, key: TrayKey) -> bool {
+        self.deleted.contains(&key)
     }
 
     /// Returns true when something that is drawn may have changed.
     pub fn apply(&mut self, change: TrayChange) -> bool {
         match change {
             TrayChange::Set(update) => {
+                self.deleted.retain(|k| *k != update.key);
                 let at = match self.items.iter().position(|i| i.key == update.key) {
                     Some(at) => at,
                     None => {
@@ -170,6 +174,9 @@ impl TrayIcons {
                 true
             }
             TrayChange::Delete(key) => {
+                if !self.deleted.contains(&key) {
+                    self.deleted.push(key);
+                }
                 let before = self.items.len();
                 self.items.retain(|i| i.key != key);
                 self.items.len() != before
@@ -191,6 +198,7 @@ impl TrayIcons {
     pub fn drop_dead(&mut self, alive: impl Fn(isize) -> bool) -> bool {
         let before = self.items.len();
         self.items.retain(|i| alive(i.key.owner));
+        self.deleted.retain(|k| alive(k.owner));
         self.items.len() != before
     }
 
@@ -297,13 +305,14 @@ mod tests {
     }
 
     #[test]
-    fn contains_follows_adds_and_deletes() {
+    fn a_deleted_icon_is_stale_until_added_again() {
         let mut icons = TrayIcons::default();
-        assert!(!icons.contains(key(1, 1)));
-        icons.apply(named(key(1, 1), "one"));
-        assert!(icons.contains(key(1, 1)));
+        assert!(!icons.was_deleted(key(1, 1)));
         icons.apply(TrayChange::Delete(key(1, 1)));
-        assert!(!icons.contains(key(1, 1)));
+        assert!(icons.was_deleted(key(1, 1)));
+        assert!(!icons.was_deleted(key(1, 2)));
+        icons.apply(named(key(1, 1), "one"));
+        assert!(!icons.was_deleted(key(1, 1)));
     }
 
     #[test]
