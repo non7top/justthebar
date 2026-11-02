@@ -1,27 +1,33 @@
 //! What the built-in bar widgets show, as plain data. Reading the system is up to the app.
 
-/// Which font a widget's text is drawn with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Face {
-    /// Segoe Fluent Icons (or Segoe MDL2 Assets), the glyphs the stock taskbar uses.
-    Symbols,
-    /// The normal UI font, for short text such as a language code.
-    Text,
-}
-
-/// One widget's current look: a glyph or a short text in one tray cell, plus its tooltip.
+/// One widget's current look: a symbol glyph and/or a short label, plus its tooltip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WidgetState {
-    pub face: Face,
-    pub text: String,
+    /// A glyph of the symbol font; empty for a text-only widget.
+    pub symbol: String,
+    /// Short text next to the glyph, such as `87%` or `EN`; may be empty.
+    pub label: String,
     pub tooltip: String,
+}
+
+/// How long (pixels at 100% scale) a widget on the bar is: its glyph and text with some padding.
+pub fn bar_length(state: &WidgetState) -> f32 {
+    let text = state.label.chars().count() as f32 * 8.0;
+    let symbol = if state.symbol.is_empty() {
+        0.0
+    } else if text > 0.0 {
+        20.0
+    } else {
+        16.0
+    };
+    (12.0 + symbol + text).max(28.0)
 }
 
 fn glyph(code: u32) -> String {
     char::from_u32(code).map(String::from).unwrap_or_default()
 }
 
-/// The battery glyph for `percent` (0 to 100), charging or not (Segoe Fluent Icons, 11 levels).
+/// The battery glyph for `percent` (0 to 100), charging or not (11 levels), with the percentage.
 pub fn battery_state(percent: u8, charging: bool) -> WidgetState {
     let level = (u32::from(percent.min(100)) + 5) / 10;
     let code = match (charging, level) {
@@ -33,13 +39,13 @@ pub fn battery_state(percent: u8, charging: bool) -> WidgetState {
     };
     let state = if charging { ", charging" } else { "" };
     WidgetState {
-        face: Face::Symbols,
-        text: glyph(code),
+        symbol: glyph(code),
+        label: format!("{percent}%"),
         tooltip: format!("Battery: {percent}%{state}"),
     }
 }
 
-/// The speaker glyph for `percent` (0 to 100), or the muted one.
+/// The speaker glyph for `percent` (0 to 100), or the muted one, with the percentage.
 pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
     let code = if muted || percent == 0 {
         0xE74F
@@ -50,29 +56,29 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
     } else {
         0xE995
     };
-    let tooltip = if muted {
-        "Speakers: muted".to_string()
+    let (label, tooltip) = if muted {
+        (String::new(), "Speakers: muted".to_string())
     } else {
-        format!("Speakers: {percent}%")
+        (format!("{percent}%"), format!("Speakers: {percent}%"))
     };
     WidgetState {
-        face: Face::Symbols,
-        text: glyph(code),
+        symbol: glyph(code),
+        label,
         tooltip,
     }
 }
 
-/// The input language indicator: the two letter language code in capitals, such as `EN`.
+/// The input language indicator: the three letter language code in capitals, such as `ENG`.
 pub fn language_state(iso_code: &str) -> WidgetState {
     let code: String = iso_code
         .chars()
-        .take(2)
+        .take(3)
         .flat_map(char::to_uppercase)
         .collect();
     WidgetState {
-        face: Face::Text,
+        symbol: String::new(),
         tooltip: format!("Input language: {code}"),
-        text: code,
+        label: code,
     }
 }
 
@@ -82,12 +88,12 @@ mod tests {
 
     #[test]
     fn battery_levels_map_to_eleven_glyphs() {
-        assert_eq!(battery_state(0, false).text, "\u{E850}");
-        assert_eq!(battery_state(52, false).text, "\u{E855}");
-        assert_eq!(battery_state(100, false).text, "\u{E83F}");
-        assert_eq!(battery_state(100, true).text, "\u{EA93}");
-        assert_eq!(battery_state(0, true).text, "\u{E85A}");
-        assert_eq!(battery_state(90, true).text, "\u{E862}");
+        assert_eq!(battery_state(0, false).symbol, "\u{E850}");
+        assert_eq!(battery_state(52, false).symbol, "\u{E855}");
+        assert_eq!(battery_state(100, false).symbol, "\u{E83F}");
+        assert_eq!(battery_state(100, true).symbol, "\u{EA93}");
+        assert_eq!(battery_state(0, true).symbol, "\u{E85A}");
+        assert_eq!(battery_state(90, true).symbol, "\u{E862}");
     }
 
     #[test]
@@ -98,18 +104,26 @@ mod tests {
 
     #[test]
     fn volume_glyph_follows_the_level_and_mute() {
-        assert_eq!(volume_state(0, false).text, "\u{E74F}");
-        assert_eq!(volume_state(50, true).text, "\u{E74F}");
-        assert_eq!(volume_state(20, false).text, "\u{E993}");
-        assert_eq!(volume_state(50, false).text, "\u{E994}");
-        assert_eq!(volume_state(90, false).text, "\u{E995}");
+        assert_eq!(volume_state(0, false).symbol, "\u{E74F}");
+        assert_eq!(volume_state(50, true).symbol, "\u{E74F}");
+        assert_eq!(volume_state(20, false).symbol, "\u{E993}");
+        assert_eq!(volume_state(50, false).symbol, "\u{E994}");
+        assert_eq!(volume_state(90, false).symbol, "\u{E995}");
     }
 
     #[test]
-    fn language_is_two_capital_letters() {
-        let state = language_state("en");
-        assert_eq!(state.text, "EN");
-        assert_eq!(state.face, Face::Text);
-        assert_eq!(language_state("rus").text, "RU");
+    fn language_is_three_capital_letters() {
+        let state = language_state("eng");
+        assert_eq!(state.label, "ENG");
+        assert!(state.symbol.is_empty());
+        assert_eq!(language_state("ru").label, "RU");
+    }
+
+    #[test]
+    fn bar_length_grows_with_the_label() {
+        let battery = bar_length(&battery_state(87, false));
+        let language = bar_length(&language_state("eng"));
+        assert!(battery > language);
+        assert!(language >= 28.0);
     }
 }

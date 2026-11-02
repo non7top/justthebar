@@ -1,9 +1,11 @@
 use std::cell::RefCell;
 
-use jtb_core::buttons::{bar_layout, hit_test, tray_icon_rect, BarLayout};
+use jtb_core::buttons::{bar_layout_with_widgets, hit_test, tray_icon_rect, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
-use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
+use jtb_core::scene::{
+    build_scene_with_widgets, start_art_size, ButtonView, Color, Drag, StartView,
+};
 use jtb_core::tray::{Mouse, Side};
 use jtb_core::Edge;
 use jtb_ui::{D2dRenderer, Renderer};
@@ -297,7 +299,9 @@ fn paint(hwnd: HWND, bar: AppBar) {
             })
             .unwrap_or((None, None, 0.0, false, 0, None))
     });
-    let scene = build_scene(
+    let tray_views = crate::tray_views(index, tray_hover);
+    let widget_views = crate::widget_views(index, tray_views.len(), tray_hover);
+    let scene = build_scene_with_widgets(
         bar.edge(),
         width as f32,
         height as f32,
@@ -326,7 +330,8 @@ fn paint(hwnd: HWND, bar: AppBar) {
                 }
             })
             .collect::<Vec<_>>(),
-        &crate::tray_views(index, tray_hover),
+        &tray_views,
+        &widget_views,
     );
     with_renderer(hwnd, |r| r.draw(&scene));
 }
@@ -374,15 +379,21 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let views = crate::bar_views(task_monitor_of(hwnd));
-    let tray = crate::tray_views(bar_index(hwnd), None).len();
-    bar_layout(
+    let index = bar_index(hwnd);
+    let tray = crate::tray_views(index, None);
+    let lengths: Vec<f32> = crate::widget_views(index, tray.len(), None)
+        .iter()
+        .map(|w| w.length)
+        .collect();
+    bar_layout_with_widgets(
         bar.edge(),
         width as f32,
         height as f32,
         scale,
         views.len(),
         start_art_size(&views),
-        tray,
+        tray.len(),
+        &lengths,
     )
 }
 

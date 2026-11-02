@@ -139,6 +139,9 @@ pub struct BarLayout {
     pub tray: Vec<Rect>,
 }
 
+/// Thickness of a widget on a side bar.
+const WIDGET_THICK: f32 = 28.0;
+
 /// Lays out `buttons` rows and `tray` icon cells. The cells sit at the end of the bar before the
 /// clock: one row on top and bottom bars, a grid on side bars. Cells that do not fit are left out.
 pub fn bar_layout(
@@ -150,14 +153,69 @@ pub fn bar_layout(
     start_size: Option<f32>,
     tray: usize,
 ) -> BarLayout {
-    let (cells, extent) = tray_cells(edge, width, height, scale, tray);
+    bar_layout_with_widgets(edge, width, height, scale, buttons, start_size, tray, &[])
+}
+
+/// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar;
+/// ignored on side bars, where each takes a row). They sit just before the tray cells, in order,
+/// and their rects follow the tray cells in `tray`.
+#[allow(clippy::too_many_arguments)]
+pub fn bar_layout_with_widgets(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    buttons: usize,
+    start_size: Option<f32>,
+    tray: usize,
+    widgets: &[f32],
+) -> BarLayout {
+    let (mut cells, extent) = tray_cells(edge, width, height, scale, tray);
+    let clock = clock_rect(edge, width, height, scale);
+    let pad = PAD * scale;
+    let gap = GAP * scale;
+    let count = widgets.len() as f32;
+    let mut reserved = extent;
+    if !widgets.is_empty() {
+        if edge.is_horizontal() {
+            let total: f32 =
+                widgets.iter().map(|len| len * scale).sum::<f32>() + gap * (count - 1.0);
+            let mut left = (clock.left - extent - pad - total).max(0.0);
+            let top = pad;
+            let bottom = (height - pad).max(pad);
+            for len in widgets {
+                let right = left + len * scale;
+                cells.push(Rect {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                });
+                left = right + gap;
+            }
+            reserved += total + pad;
+        } else {
+            let each = WIDGET_THICK * scale;
+            let total = each * count + gap * (count - 1.0);
+            let mut top = (clock.top - extent - pad - total).max(0.0);
+            for _ in widgets {
+                cells.push(Rect {
+                    left: pad,
+                    top,
+                    right: (width - pad).max(pad),
+                    bottom: top + each,
+                });
+                top += each + gap;
+            }
+            reserved += total + pad;
+        }
+    }
     BarLayout {
-        rows: layout_rows(edge, width, height, scale, buttons, start_size, extent),
+        rows: layout_rows(edge, width, height, scale, buttons, start_size, reserved),
         tray: cells,
     }
 }
 
-/// The notification area cells in arrival order and the length of the bar they take.
 fn tray_cells(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> (Vec<Rect>, f32) {
     if count == 0 {
         return (Vec::new(), 0.0);
@@ -372,6 +430,31 @@ mod tests {
         let none = bar_layout(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 0);
         assert_eq!(none.rows, plain);
         assert!(none.tray.is_empty());
+    }
+
+    #[test]
+    fn bar_widgets_sit_before_the_tray_cells_in_order() {
+        let layout =
+            bar_layout_with_widgets(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 2, &[50.0, 30.0]);
+        assert_eq!(layout.tray.len(), 4);
+        let (first, second) = (layout.tray[2], layout.tray[3]);
+        assert_eq!(first.right - first.left, 50.0);
+        assert_eq!(second.right - second.left, 30.0);
+        assert!(first.right <= second.left);
+        assert!(second.right <= layout.tray[0].left);
+        assert!(layout.rows[2].right <= first.left);
+    }
+
+    #[test]
+    fn bar_widgets_stack_above_the_tray_on_a_side_bar() {
+        let layout =
+            bar_layout_with_widgets(Edge::Right, 200.0, 1080.0, 1.0, 2, None, 3, &[50.0, 50.0]);
+        assert_eq!(layout.tray.len(), 5);
+        let (first, second) = (layout.tray[3], layout.tray[4]);
+        assert_eq!(first.bottom - first.top, 28.0);
+        assert!(first.bottom <= second.top);
+        assert!(second.bottom <= layout.tray[0].top);
+        assert!(layout.rows[1].bottom <= first.top);
     }
 
     #[test]

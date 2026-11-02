@@ -13,7 +13,7 @@ use jtb_core::config::PinConfig;
 use jtb_core::config::{Action, Button, Config, StartConfig, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
-use jtb_core::scene::{ButtonView, Drag, StartView, TrayView};
+use jtb_core::scene::{ButtonView, Drag, StartView, TrayView, WidgetView};
 use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
@@ -320,7 +320,7 @@ pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
     if config.tray.enabled && tray::is_active() {
         TRAY_ICONS.with_borrow(|list| icons.extend(list.visible().filter_map(|i| i.icon.clone())));
     }
-    icons.extend(widgets::icons());
+    icons.extend(widgets::tray_icons());
     icons
         .into_iter()
         .enumerate()
@@ -329,6 +329,20 @@ pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
             hovered: hovered == Some(at),
         })
         .collect()
+}
+
+/// The widgets the bar with this config index shows on the bar itself; `hovered` is the cell the
+/// pointer is on, counted from the first tray icon (the widgets' cells come last).
+pub fn widget_views(
+    bar_index: usize,
+    tray_cells: usize,
+    hovered: Option<usize>,
+) -> Vec<WidgetView> {
+    let config = current_config();
+    if config.tray.bar != bar_index {
+        return Vec::new();
+    }
+    widgets::bar_views(hovered.and_then(|at| at.checked_sub(tray_cells)))
 }
 
 /// How many cells of the notification area belong to tray icons; the widgets follow them.

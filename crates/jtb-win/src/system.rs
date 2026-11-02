@@ -1,5 +1,5 @@
 //! Small reads of system state for the bar widgets.
-use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME};
+use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME2};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -18,12 +18,12 @@ pub fn battery() -> Option<(u8, bool)> {
     Some((percent, charging))
 }
 
-/// The ISO 639 code (`en`, `ru`) of the keyboard layout of the foreground window.
+/// The three letter ISO 639-2 code (`eng`, `rus`) of the keyboard layout of the foreground window.
 pub fn input_language() -> Option<String> {
     let thread = unsafe { GetWindowThreadProcessId(GetForegroundWindow(), None) };
     let layout = unsafe { GetKeyboardLayout(thread) };
     let language_id = (layout.0 as usize & 0xFFFF) as u32;
     let mut buffer = [0u16; 16];
-    let len = unsafe { GetLocaleInfoW(language_id, LOCALE_SISO639LANGNAME, Some(&mut buffer)) };
+    let len = unsafe { GetLocaleInfoW(language_id, LOCALE_SISO639LANGNAME2, Some(&mut buffer)) };
     (len > 1).then(|| String::from_utf16_lossy(&buffer[..len as usize - 1]))
 }

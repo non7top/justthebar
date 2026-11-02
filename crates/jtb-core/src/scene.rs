@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::buttons::{bar_layout, clock_rect, icon_rect, stripe_split, title_left, tray_icon_rect};
+use crate::buttons::{
+    bar_layout_with_widgets, clock_rect, icon_rect, stripe_split, title_left, tray_icon_rect,
+};
 use crate::icon::Icon;
 use crate::Edge;
 
@@ -102,6 +104,18 @@ pub struct TrayView {
     pub hovered: bool,
 }
 
+/// What one widget placed on the bar itself shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetView {
+    /// The glyph, drawn as a white icon.
+    pub symbol: Option<Arc<Icon>>,
+    /// Text next to the glyph (or alone).
+    pub label: String,
+    /// How long the widget is along the bar, in pixels at 100% scale.
+    pub length: f32,
+    pub hovered: bool,
+}
+
 /// What one task button shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ButtonView {
@@ -195,9 +209,35 @@ pub fn build_scene(
     height: f32,
     scale: f32,
     background: Color,
+    time: (u16, u16),
+    buttons: &[ButtonView],
+    tray: &[TrayView],
+) -> Scene {
+    build_scene_with_widgets(
+        edge,
+        width,
+        height,
+        scale,
+        background,
+        time,
+        buttons,
+        tray,
+        &[],
+    )
+}
+
+/// Like `build_scene`, with widgets on the bar itself, just before the tray cells.
+#[allow(clippy::too_many_arguments)]
+pub fn build_scene_with_widgets(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    background: Color,
     (hour, minute): (u16, u16),
     buttons: &[ButtonView],
     tray: &[TrayView],
+    widgets: &[WidgetView],
 ) -> Scene {
     let white = Color::rgb(1.0, 1.0, 1.0);
     let mut fills = Vec::new();
@@ -208,7 +248,8 @@ pub fn build_scene(
         color: white,
         leading: false,
     }];
-    let layout = bar_layout(
+    let lengths: Vec<f32> = widgets.iter().map(|w| w.length).collect();
+    let layout = bar_layout_with_widgets(
         edge,
         width,
         height,
@@ -216,6 +257,7 @@ pub fn build_scene(
         buttons.len(),
         start_art_size(buttons),
         tray.len(),
+        &lengths,
     );
     for (cell, view) in layout.tray.iter().zip(tray) {
         if view.hovered {
@@ -229,6 +271,46 @@ pub fn build_scene(
             icon: Arc::clone(&view.icon),
             opacity: 1.0,
         });
+    }
+    let first_widget = layout.tray.len().saturating_sub(widgets.len());
+    for (cell, view) in layout.tray[first_widget..].iter().zip(widgets) {
+        if view.hovered {
+            fills.push(Fill {
+                rect: *cell,
+                color: Color { a: 0.22, ..white },
+            });
+        }
+        let mut text = *cell;
+        let mut centered = true;
+        if let Some(symbol) = &view.symbol {
+            let size = 16.0 * scale;
+            let left = if view.label.is_empty() {
+                (cell.left + cell.right - size) / 2.0
+            } else {
+                cell.left + 6.0 * scale
+            };
+            let top = (cell.top + cell.bottom - size) / 2.0;
+            icons.push(IconDraw {
+                rect: Rect {
+                    left,
+                    top,
+                    right: left + size,
+                    bottom: top + size,
+                },
+                icon: Arc::clone(symbol),
+                opacity: 1.0,
+            });
+            text.left = left + size + 4.0 * scale;
+            centered = false;
+        }
+        if !view.label.is_empty() {
+            labels.push(Label {
+                rect: text,
+                text: view.label.clone(),
+                color: white,
+                leading: !centered,
+            });
+        }
     }
     for (rect, button) in layout.rows.into_iter().zip(buttons) {
         if let Some(frames) = button.start.as_ref().and_then(|s| s.frames.as_ref()) {

@@ -1,10 +1,12 @@
-//! The built-in bar widgets. Each one reads some system state and shows it as one cell next to the
-//! tray icons; `jtb.json` picks which ones with `widgets`.
+//! The built-in bar widgets. Each one reads some system state and shows it either on the bar itself
+//! or as a small cell in the notification area; `jtb.json` picks which ones and where.
 use std::cell::RefCell;
 use std::sync::Arc;
 
+use jtb_core::config::{WidgetConfig, WidgetPlace};
 use jtb_core::icon::Icon;
-use jtb_core::widget::{self, Face, WidgetState};
+use jtb_core::scene::WidgetView;
+use jtb_core::widget::{self, WidgetState};
 use jtb_win::{glyph, system};
 
 const SYMBOL_FONT: &str = "Segoe MDL2 Assets";
@@ -68,21 +70,28 @@ fn create(name: &str) -> Option<Box<dyn Widget>> {
     }
 }
 
+/// A widget's state with its bitmaps: the glyph, and the label as a bitmap for the tray cell.
+struct Shown {
+    state: WidgetState,
+    symbol: Option<Arc<Icon>>,
+    label: Option<Arc<Icon>>,
+}
+
 struct Cell {
     widget: Box<dyn Widget>,
-    shown: Option<(WidgetState, Arc<Icon>)>,
+    place: WidgetPlace,
+    shown: Option<Shown>,
 }
 
 thread_local! {
     static CELLS: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
 }
 
-fn draw(state: &WidgetState) -> Option<Arc<Icon>> {
-    let font = match state.face {
-        Face::Symbols => SYMBOL_FONT,
-        Face::Text => TEXT_FONT,
-    };
-    let bgra = glyph::render(font, &state.text, BITMAP_SIZE)?;
+fn draw(font: &str, text: &str) -> Option<Arc<Icon>> {
+    if text.is_empty() {
+        return None;
+    }
+    let bgra = glyph::render(font, text, BITMAP_SIZE)?;
     Some(Arc::new(Icon {
         id: crate::next_icon_id(),
         width: BITMAP_SIZE,
@@ -91,17 +100,26 @@ fn draw(state: &WidgetState) -> Option<Arc<Icon>> {
     }))
 }
 
-/// Replaces the widgets with those named in `names`; unknown names are logged and skipped.
-pub fn rebuild(names: &[String]) {
-    let cells = names
+fn show(state: WidgetState) -> Shown {
+    Shown {
+        symbol: draw(SYMBOL_FONT, &state.symbol),
+        label: draw(TEXT_FONT, &state.label),
+        state,
+    }
+}
+
+/// Replaces the widgets with those in `config`; unknown names are logged and skipped.
+pub fn rebuild(config: &[WidgetConfig]) {
+    let cells = config
         .iter()
-        .filter_map(|name| match create(name) {
+        .filter_map(|entry| match create(&entry.name) {
             Some(widget) => Some(Cell {
                 widget,
+                place: entry.place,
                 shown: None,
             }),
             None => {
-                crate::log(&format!("widgets: unknown widget {name:?}"));
+                crate::log(&format!("widgets: unknown widget {:?}", entry.name));
                 None
             }
         })
@@ -117,7 +135,7 @@ pub fn refresh() -> bool {
         for cell in cells {
             let state = cell.widget.state();
             let same = match (&state, &cell.shown) {
-                (Some(new), Some((old, _))) => new == old,
+                (Some(new), Some(old)) => *new == old.state,
                 (None, None) => true,
                 _ => false,
             };
@@ -125,49 +143,80 @@ pub fn refresh() -> bool {
                 continue;
             }
             changed = true;
-            cell.shown = state.and_then(|state| draw(&state).map(|icon| (state, icon)));
+            cell.shown = state.map(show);
             crate::log(&format!(
                 "widgets: {} now {:?}",
                 cell.widget.name(),
-                cell.shown.as_ref().map(|(state, _)| &state.tooltip)
+                cell.shown.as_ref().map(|shown| &shown.state.tooltip)
             ));
         }
         changed
     })
 }
 
-/// The icons of the widgets that have something to show, in order.
-pub fn icons() -> Vec<Arc<Icon>> {
+/// The `at`th shown widget in the order of the cells: those in the notification area, then those
+/// on the bar.
+fn nth_shown(cells: &mut [Cell], at: usize) -> Option<&mut Cell> {
+    let mut order = Vec::new();
+    for place in [WidgetPlace::Tray, WidgetPlace::Bar] {
+        for (i, cell) in cells.iter().enumerate() {
+            if cell.place == place && cell.shown.is_some() {
+                order.push(i);
+            }
+        }
+    }
+    let index = *order.get(at)?;
+    cells.get_mut(index)
+}
+
+/// The icons of the widgets shown in the notification area: the glyph, or the text when the widget
+/// has no glyph.
+pub fn tray_icons() -> Vec<Arc<Icon>> {
+    CELLS.with_borrow_mut(|cells| {
+        let mut icons = Vec::new();
+        for cell in cells.iter().filter(|c| c.place == WidgetPlace::Tray) {
+            if let Some(shown) = &cell.shown {
+                if let Some(icon) = shown.symbol.as_ref().or(shown.label.as_ref()) {
+                    icons.push(Arc::clone(icon));
+                }
+            }
+        }
+        icons
+    })
+}
+
+/// The widgets shown on the bar; `hovered` is the index among them.
+pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
     CELLS.with_borrow(|cells| {
         cells
             .iter()
-            .filter_map(|cell| cell.shown.as_ref().map(|(_, icon)| Arc::clone(icon)))
+            .filter(|c| c.place == WidgetPlace::Bar)
+            .filter_map(|c| c.shown.as_ref())
+            .enumerate()
+            .map(|(at, shown)| WidgetView {
+                symbol: shown.symbol.clone(),
+                label: shown.state.label.clone(),
+                length: widget::bar_length(&shown.state),
+                hovered: hovered == Some(at),
+            })
             .collect()
     })
 }
 
-fn with_shown<T>(at: usize, f: impl FnOnce(&mut Cell) -> T) -> Option<T> {
-    CELLS.with_borrow_mut(|cells| {
-        cells
-            .iter_mut()
-            .filter(|cell| cell.shown.is_some())
-            .nth(at)
-            .map(f)
-    })
-}
-
-/// The tooltip of the `at`th shown widget.
+/// The tooltip of the `at`th shown widget (tray ones first, then bar ones).
 pub fn tooltip(at: usize) -> Option<String> {
-    with_shown(at, |cell| {
-        cell.shown.as_ref().map(|(s, _)| s.tooltip.clone())
+    CELLS.with_borrow_mut(|cells| {
+        nth_shown(cells, at)
+            .and_then(|cell| cell.shown.as_ref().map(|shown| shown.state.tooltip.clone()))
     })
-    .flatten()
 }
 
 /// A left click on the `at`th shown widget.
 pub fn click(at: usize) {
     // Opening a URI can pump messages, which re-enter `refresh`, so the borrow must be over.
-    if let Some(Some(Action::Open(uri))) = with_shown(at, |cell| cell.widget.click()) {
+    let action =
+        CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
+    if let Some(Action::Open(uri)) = action {
         crate::open_uri(uri);
     }
 }

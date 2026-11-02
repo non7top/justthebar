@@ -130,6 +130,48 @@ pub struct GroupConfig {
     pub exes: Vec<String>,
 }
 
+/// Where a widget is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WidgetPlace {
+    /// On the bar itself, between the task buttons and the notification area.
+    #[default]
+    Bar,
+    /// As a small icon cell in the notification area.
+    Tray,
+}
+
+/// A built-in widget to show: `"battery"`, or `{ "name": "battery", "place": "tray" }`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(from = "WidgetEntry")]
+pub struct WidgetConfig {
+    pub name: String,
+    pub place: WidgetPlace,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WidgetEntry {
+    Name(String),
+    Full {
+        name: String,
+        #[serde(default)]
+        place: WidgetPlace,
+    },
+}
+
+impl From<WidgetEntry> for WidgetConfig {
+    fn from(entry: WidgetEntry) -> Self {
+        match entry {
+            WidgetEntry::Name(name) => WidgetConfig {
+                name,
+                place: WidgetPlace::default(),
+            },
+            WidgetEntry::Full { name, place } => WidgetConfig { name, place },
+        }
+    }
+}
+
 /// The Start button, drawn by the bar; a click runs `command`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -244,7 +286,7 @@ pub struct Config {
     pub tray: TrayConfig,
     /// Built-in widgets (`battery`, `language`, ...) shown in the notification area of the tray
     /// bar, left to right, next to the clock.
-    pub widgets: Vec<String>,
+    pub widgets: Vec<WidgetConfig>,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
 }
@@ -439,6 +481,28 @@ mod tests {
         assert!(Config::parse(r#"{"tray": {"enabled": true, "bar": 1}}"#).is_err());
         assert!(Config::parse(r#"{"tray": {"enabled": false, "bar": 5}}"#).is_ok());
         assert!(Config::parse(r#"{"tray": {"icons": 1}}"#).is_err());
+    }
+
+    #[test]
+    fn widgets_take_a_name_or_a_name_with_a_place() {
+        let config = Config::parse(
+            r#"{"widgets": ["battery", {"name": "language", "place": "tray"}, {"name": "volume"}]}"#,
+        )
+        .unwrap();
+        let places: Vec<(&str, WidgetPlace)> = config
+            .widgets
+            .iter()
+            .map(|w| (w.name.as_str(), w.place))
+            .collect();
+        assert_eq!(
+            places,
+            [
+                ("battery", WidgetPlace::Bar),
+                ("language", WidgetPlace::Tray),
+                ("volume", WidgetPlace::Bar)
+            ]
+        );
+        assert!(Config::parse(r#"{"widgets": [{"name": "x", "place": "left"}]}"#).is_err());
     }
 
     #[test]
