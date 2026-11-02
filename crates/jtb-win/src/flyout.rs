@@ -48,6 +48,16 @@ pub fn just_dismissed() -> bool {
             .is_some_and(|at| at.elapsed() < Duration::from_millis(600))
 }
 
+/// True while the flyout is on screen.
+pub fn is_open() -> bool {
+    visible_flyout().is_some()
+}
+
+/// The flyout is about to be closed: stop moving it, or the closing window gets pulled back.
+pub fn leave_alone() {
+    PENDING.set(None);
+}
+
 /// The flyout's state at a click, for the log.
 pub fn describe() -> String {
     format!(

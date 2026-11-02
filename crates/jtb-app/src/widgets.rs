@@ -316,7 +316,9 @@ pub fn click(at: usize) {
             if dismissed {
                 return;
             }
-            if let Some(anchor) = crate::bar::flyout_anchor() {
+            if jtb_win::flyout::is_open() {
+                jtb_win::flyout::leave_alone();
+            } else if let Some(anchor) = crate::bar::flyout_anchor() {
                 jtb_win::flyout::expect(anchor);
             }
             system::open_quick_settings();
