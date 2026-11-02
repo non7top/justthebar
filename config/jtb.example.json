@@ -32,6 +32,7 @@
     "enabled": false,
     "bar": 0
   },
+  "widgets": [],
   "pins": [],
   "groups": []
 }

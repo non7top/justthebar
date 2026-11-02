@@ -242,6 +242,9 @@ pub struct Config {
     pub mouse: MouseConfig,
     pub start: StartConfig,
     pub tray: TrayConfig,
+    /// Built-in widgets (`battery`, `language`, ...) shown in the notification area of the tray
+    /// bar, left to right, next to the clock.
+    pub widgets: Vec<String>,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
 }
@@ -258,6 +261,7 @@ impl Default for Config {
             mouse: MouseConfig::default(),
             start: StartConfig::default(),
             tray: TrayConfig::default(),
+            widgets: Vec::new(),
             pins: Vec::new(),
             groups: Vec::new(),
         }

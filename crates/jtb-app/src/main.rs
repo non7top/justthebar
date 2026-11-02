@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod bar;
+mod widgets;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -159,6 +160,7 @@ fn load_config(path: &PathBuf) -> std::result::Result<Config, String> {
 
 /// Applies `config`: explorer visibility first, then every bar is rebuilt.
 fn apply(config: &Config, force_hide_explorer: bool) {
+    widgets::rebuild(&config.widgets);
     let hide = config.hide_explorer_taskbar || force_hide_explorer;
     let control = CONTROL.get();
     if hide != EXPLORER_HIDDEN.get() {
@@ -307,23 +309,31 @@ fn next_icon_id() -> u64 {
     id
 }
 
-/// The icons the bar with this config index shows in its notification area; none for other bars.
+/// The icons the bar with this config index shows in its notification area (the tray icons, then
+/// the widgets); none for other bars.
 pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
     let config = current_config();
-    if !config.tray.enabled || config.tray.bar != bar_index || !tray::is_active() {
+    if config.tray.bar != bar_index {
         return Vec::new();
     }
-    TRAY_ICONS.with_borrow(|icons| {
-        icons
-            .visible()
-            .filter_map(|i| i.icon.clone())
-            .enumerate()
-            .map(|(at, icon)| TrayView {
-                icon,
-                hovered: hovered == Some(at),
-            })
-            .collect()
-    })
+    let mut icons: Vec<Arc<Icon>> = Vec::new();
+    if config.tray.enabled && tray::is_active() {
+        TRAY_ICONS.with_borrow(|list| icons.extend(list.visible().filter_map(|i| i.icon.clone())));
+    }
+    icons.extend(widgets::icons());
+    icons
+        .into_iter()
+        .enumerate()
+        .map(|(at, icon)| TrayView {
+            icon,
+            hovered: hovered == Some(at),
+        })
+        .collect()
+}
+
+/// How many cells of the notification area belong to tray icons; the widgets follow them.
+fn tray_cell_count() -> usize {
+    TRAY_ICONS.with_borrow(|icons| icons.visible().filter(|i| i.icon.is_some()).count())
 }
 
 /// The icon drawn in cell `at` of the notification area (the cells follow `tray_views`).
@@ -337,8 +347,12 @@ fn tray_icon_at(at: usize) -> Option<TrayIcon> {
     })
 }
 
-/// The tooltip of the icon in cell `at`; none when the app gave it no text.
+/// The tooltip of the icon or widget in cell `at`; none when it has no text.
 pub fn tray_tooltip(at: usize) -> Option<String> {
+    let tray_cells = tray_cell_count();
+    if at >= tray_cells {
+        return widgets::tooltip(at - tray_cells);
+    }
     tray_icon_at(at)
         .map(|i| i.tooltip)
         .filter(|tip| !tip.is_empty())
@@ -355,6 +369,19 @@ fn cursor_word() -> u32 {
 
 /// Passes a mouse event on an icon to the app that owns it.
 pub fn tray_mouse(at: usize, event: Mouse) {
+    let tray_cells = tray_cell_count();
+    if at >= tray_cells {
+        if matches!(
+            event,
+            Mouse::Down {
+                side: Side::Left,
+                double: false
+            }
+        ) {
+            widgets::click(at - tray_cells);
+        }
+        return;
+    }
     let Some(icon) = tray_icon_at(at) else { return };
     let owner = icon.key.owner;
     if icon.callback_message == 0 || !tray::owner_alive(owner) {
@@ -831,6 +858,11 @@ fn launch_app(path: &str, args: &[String]) {
     }
 }
 
+/// Opens a URI such as `ms-settings:sound` with its registered app.
+fn open_uri(uri: &str) {
+    launch_app(uri, &[]);
+}
+
 fn exe_of(id: isize) -> String {
     TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()).unwrap_or_default())
 }
@@ -1200,6 +1232,7 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 }
                 TIMER_CLOCK => {
                     drop_dead_tray_icons();
+                    widgets::refresh();
                     sync_tasks();
                     bar::invalidate_all();
                     let now = explorer::snapshot();

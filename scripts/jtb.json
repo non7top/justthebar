@@ -6,6 +6,7 @@
   ],
   "start": { "enabled": true, "image": "start-button_large.png" },
   "tray": { "enabled": true, "bar": 0 },
+  "widgets": ["language", "battery"],
   "pins": [
     { "name": "Notepad", "path": "C:\\Windows\\notepad.exe" }
   ],
