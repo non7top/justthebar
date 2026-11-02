@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 
 /// Premultiplied BGRA pixels, `size` x `size`, white where `text` is drawn in `font`.
-pub fn render(font: &str, text: &str, size: u32) -> Option<Vec<u8>> {
+pub fn render(font: &str, text: &str, size: u32, tint: [u8; 3]) -> Option<Vec<u8>> {
     let face: Vec<u16> = font.encode_utf16().chain(Some(0)).collect();
     let mut wide: Vec<u16> = text.encode_utf16().collect();
     unsafe {
@@ -74,7 +74,8 @@ pub fn render(font: &str, text: &str, size: u32) -> Option<Vec<u8>> {
         let mut out = Vec::with_capacity(pixels.len());
         for px in pixels.as_chunks::<4>().0 {
             let alpha = px[0].max(px[1]).max(px[2]);
-            out.extend_from_slice(&[alpha, alpha, alpha, alpha]);
+            let scaled = |channel: u8| (u16::from(channel) * u16::from(alpha) / 255) as u8;
+            out.extend_from_slice(&[scaled(tint[2]), scaled(tint[1]), scaled(tint[0]), alpha]);
         }
         SelectObject(dc, old_font);
         SelectObject(dc, old_bitmap);

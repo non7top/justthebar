@@ -8,6 +8,8 @@ pub struct WidgetState {
     /// Short text next to the glyph, such as `87%` or `EN`; may be empty.
     pub label: String,
     pub tooltip: String,
+    /// Color of the glyph (red, green, blue); none draws it in the bar's text color.
+    pub tint: Option<[u8; 3]>,
 }
 
 /// How long (pixels at 100% scale) a widget on the bar is: its glyph and text with some padding.
@@ -42,6 +44,13 @@ pub fn battery_state(percent: u8, charging: bool) -> WidgetState {
         symbol: glyph(code),
         label: format!("{percent}%"),
         tooltip: format!("Battery: {percent}%{state}"),
+        tint: if charging {
+            Some([0x6C, 0xCB, 0x5F])
+        } else if percent <= 15 {
+            Some([0xFF, 0x99, 0xA4])
+        } else {
+            None
+        },
     }
 }
 
@@ -65,6 +74,7 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
         symbol: glyph(code),
         label,
         tooltip,
+        tint: None,
     }
 }
 
@@ -99,6 +109,7 @@ pub fn network_state(network: &Network) -> WidgetState {
         symbol: glyph(code),
         label: String::new(),
         tooltip,
+        tint: None,
     }
 }
 
@@ -113,12 +124,20 @@ pub fn language_state(iso_code: &str) -> WidgetState {
         symbol: String::new(),
         tooltip: format!("Input language: {code}"),
         label: code,
+        tint: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_charging_battery_is_green_and_a_low_one_red() {
+        assert_eq!(battery_state(60, true).tint, Some([0x6C, 0xCB, 0x5F]));
+        assert_eq!(battery_state(10, false).tint, Some([0xFF, 0x99, 0xA4]));
+        assert_eq!(battery_state(60, false).tint, None);
+    }
 
     #[test]
     fn battery_levels_map_to_eleven_glyphs() {

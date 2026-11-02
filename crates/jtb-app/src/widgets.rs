@@ -12,6 +12,7 @@ use jtb_win::{glyph, system};
 const SYMBOL_FONT: &str = "Segoe MDL2 Assets";
 const TEXT_FONT: &str = "Segoe UI Semibold";
 const BITMAP_SIZE: u32 = 32;
+const WHITE: [u8; 3] = [255, 255, 255];
 
 /// What a click asks the app to do, once the widget list is no longer borrowed.
 pub enum Action {
@@ -159,11 +160,11 @@ thread_local! {
     static CELLS: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
 }
 
-fn draw(font: &str, text: &str) -> Option<Arc<Icon>> {
+fn draw(font: &str, text: &str, tint: [u8; 3]) -> Option<Arc<Icon>> {
     if text.is_empty() {
         return None;
     }
-    let bgra = glyph::render(font, text, BITMAP_SIZE)?;
+    let bgra = glyph::render(font, text, BITMAP_SIZE, tint)?;
     Some(Arc::new(Icon {
         id: crate::next_icon_id(),
         width: BITMAP_SIZE,
@@ -174,8 +175,8 @@ fn draw(font: &str, text: &str) -> Option<Arc<Icon>> {
 
 fn show(state: WidgetState) -> Shown {
     Shown {
-        symbol: draw(SYMBOL_FONT, &state.symbol),
-        label: draw(TEXT_FONT, &state.label),
+        symbol: draw(SYMBOL_FONT, &state.symbol, state.tint.unwrap_or(WHITE)),
+        label: draw(TEXT_FONT, &state.label, WHITE),
         state,
     }
 }
