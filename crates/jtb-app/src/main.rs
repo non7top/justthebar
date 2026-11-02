@@ -611,28 +611,36 @@ fn run_start(config: &StartConfig) {
         "start button: {} {:?}",
         config.command, config.args
     ));
-    if let Some(rect) = START_RECT.take() {
+    let held = START_RECT.take();
+    if let Some(rect) = held {
         let moved = startmenu::move_button(rect);
         log(&format!(
             "start: Open-Shell button asked to move to {rect:?}, now at {moved:?}"
         ));
     }
-    log(&format!(
-        "start: Explorer taskbar {:?}",
-        startmenu::explorer_tray_info()
-    ));
     launch_app(&config.command, &config.args);
-    std::thread::spawn(|| {
-        let started = std::time::Instant::now();
-        for _ in 0..8 {
-            std::thread::sleep(std::time::Duration::from_millis(60));
+    if let Some(rect) = held {
+        std::thread::spawn(move || hold_start_button(rect));
+    }
+}
+
+/// Open-Shell puts its button back about 200 ms after a click and reads it for the menu position
+/// at about the same time, so the button is moved again until the menu has opened.
+fn hold_start_button(rect: RECT) {
+    let started = std::time::Instant::now();
+    let mut logged = 0;
+    while started.elapsed() < std::time::Duration::from_millis(700) {
+        startmenu::move_button(rect);
+        let ms = started.elapsed().as_millis();
+        if ms / 100 >= logged {
+            logged += 1;
             log(&format!(
-                "start: +{} ms Open-Shell button at {:?}",
-                started.elapsed().as_millis(),
+                "start: +{ms} ms Open-Shell button at {:?}",
                 startmenu::button_rect()
             ));
         }
-    });
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 /// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.
