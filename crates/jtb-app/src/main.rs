@@ -228,6 +228,9 @@ fn on_tray_packet(data: &[u8]) -> bool {
         .and_then(|path| path.rsplit('\\').next().map(str::to_string))
         .unwrap_or_default();
     let valid = packet.is_valid();
+    if packet.is_shell_status_icon() {
+        return false;
+    }
     // An app that deleted its icon may keep modifying it; Explorer has no such icon, so refuse.
     if packet.is_modify() && TRAY_ICONS.with_borrow(|icons| icons.was_deleted(packet.key())) {
         log(&format!(

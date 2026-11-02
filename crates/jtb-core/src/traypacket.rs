@@ -14,6 +14,7 @@ pub const NIF_MESSAGE: u32 = 0x1;
 pub const NIF_ICON: u32 = 0x2;
 pub const NIF_TIP: u32 = 0x4;
 pub const NIF_STATE: u32 = 0x8;
+pub const NIF_GUID: u32 = 0x20;
 
 pub const NIS_HIDDEN: u32 = 0x1;
 
@@ -33,6 +34,22 @@ const STATE: usize = 288;
 const STATE_MASK: usize = 292;
 const VERSION: usize = 808;
 const GUID: usize = 944;
+
+/// The well-known ids (as GUID bytes) of the power, network and volume icons Explorer keeps for
+/// its own quick settings area; the values are from Cairo's NotificationArea.cs.
+const SHELL_STATUS_GUIDS: [[u8; 16]; 3] = [
+    guid_bytes(0x7820ae75), // power
+    guid_bytes(0x7820ae74), // network
+    guid_bytes(0x7820ae73), // volume
+];
+
+const fn guid_bytes(first: u32) -> [u8; 16] {
+    let f = first.to_le_bytes();
+    [
+        f[0], f[1], f[2], f[3], 0xe3, 0x23, 0x29, 0x42, 0x82, 0xc1, 0xe4, 0x1c, 0xb6, 0x7d, 0x5b,
+        0x9c,
+    ]
+}
 
 /// What an app asked for with `Shell_NotifyIcon`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +153,12 @@ impl NotifyPacket {
         matches!(self.message, NIM_ADD | NIM_MODIFY)
             && self.flags & NIF_ICON != 0
             && self.icon_handle != 0
+    }
+
+    /// True for the power, network and volume icons of Explorer's quick settings area, which
+    /// Explorer's own tray does not list either.
+    pub fn is_shell_status_icon(&self) -> bool {
+        self.flags & NIF_GUID != 0 && SHELL_STATUS_GUIDS.contains(&self.guid)
     }
 
     pub fn is_modify(&self) -> bool {
@@ -254,6 +277,23 @@ mod tests {
     fn points_pack_into_one_value_and_negative_x_stays_16_bit() {
         assert_eq!(pack_point(10, 20), (20 << 16) | 10);
         assert_eq!(pack_point(-1, 0), 0xFFFF);
+    }
+
+    #[test]
+    fn the_quick_settings_icons_are_recognised_by_their_guid() {
+        let mut buf = packet(NIM_MODIFY, 5, 1, NIF_GUID | NIF_ICON);
+        let guid = [
+            0x75, 0xae, 0x20, 0x78, 0xe3, 0x23, 0x29, 0x42, 0x82, 0xc1, 0xe4, 0x1c, 0xb6, 0x7d,
+            0x5b, 0x9c,
+        ];
+        buf[GUID..GUID + 16].copy_from_slice(&guid);
+        assert!(parse_notify(&buf).unwrap().is_shell_status_icon());
+        let mut other = packet(NIM_MODIFY, 5, 1, NIF_ICON);
+        other[GUID..GUID + 16].copy_from_slice(&guid);
+        assert!(!parse_notify(&other).unwrap().is_shell_status_icon());
+        let mut health = packet(NIM_MODIFY, 5, 1, NIF_GUID);
+        health[GUID] = 0x76;
+        assert!(!parse_notify(&health).unwrap().is_shell_status_icon());
     }
 
     #[test]
