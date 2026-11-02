@@ -7,29 +7,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetWindow, GetWindowRect, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 
-/// Gives Explorer's taskbar window the rectangle `to` (screen coordinates). Open-Shell limits a side
-/// taskbar to the extent of that window, which sits as a thin strip at the screen bottom while
-/// hidden. Returns the rectangle before and after, or `None` when there is no such window.
-pub fn fit_explorer_tray(to: RECT) -> Option<(RECT, RECT)> {
-    let tray = crate::tray::explorer_tray()?;
-    let mut before = RECT::default();
-    let mut after = RECT::default();
-    unsafe {
-        GetWindowRect(tray, &mut before).ok()?;
-        let _ = SetWindowPos(
-            tray,
-            None,
-            to.left,
-            to.top,
-            to.right - to.left,
-            to.bottom - to.top,
-            SWP_NOACTIVATE | SWP_NOZORDER,
-        );
-        GetWindowRect(tray, &mut after).ok()?;
-    }
-    Some((before, after))
-}
-
 /// Moves Open-Shell's button of the main taskbar to `to` (screen coordinates). Returns where the
 /// button ended up, or `None` when there is no such button.
 pub fn move_button(to: RECT) -> Option<RECT> {
