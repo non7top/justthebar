@@ -160,11 +160,19 @@ impl Default for StartConfig {
 
 /// The notification area: when enabled we own the `Shell_TrayWnd` role and show the icons on
 /// bar number `bar`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct TrayConfig {
     pub enabled: bool,
     pub bar: usize,
+    /// Executable names (like `msrdc.exe`) whose icons are not shown.
+    pub hide: Vec<String>,
+}
+
+impl TrayConfig {
+    pub fn hides(&self, exe: &str) -> bool {
+        self.hide.iter().any(|name| name.eq_ignore_ascii_case(exe))
+    }
 }
 
 /// What a click does.
@@ -431,6 +439,14 @@ mod tests {
         assert!(Config::parse(r#"{"tray": {"enabled": true, "bar": 1}}"#).is_err());
         assert!(Config::parse(r#"{"tray": {"enabled": false, "bar": 5}}"#).is_ok());
         assert!(Config::parse(r#"{"tray": {"icons": 1}}"#).is_err());
+    }
+
+    #[test]
+    fn tray_hide_matches_exe_names_without_regard_to_case() {
+        let config = Config::parse(r#"{"tray": {"hide": ["msrdc.exe"]}}"#).unwrap();
+        assert!(config.tray.hides("MSRDC.exe"));
+        assert!(!config.tray.hides("msrdc"));
+        assert!(!TrayConfig::default().hides("msrdc.exe"));
     }
 
     #[test]

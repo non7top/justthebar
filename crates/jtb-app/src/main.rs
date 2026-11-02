@@ -228,6 +228,10 @@ fn on_tray_packet(data: &[u8]) -> bool {
         .and_then(|path| path.rsplit('\\').next().map(str::to_string))
         .unwrap_or_default();
     let valid = packet.is_valid();
+    if current_config().tray.hides(&owner) {
+        log(&format!("tray: icon of {owner} hidden by tray.hide"));
+        return valid;
+    }
     let icon = if valid && packet.wants_icon() {
         let id = next_icon_id();
         tasks::icon_from_handle(packet.icon_handle, id).map(Arc::new)

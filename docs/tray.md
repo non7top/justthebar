@@ -2,7 +2,9 @@
 
 `"tray": { "enabled": true, "bar": 0 }` makes justthebar take over the notification area role, the way Cairo Desktop does: the app creates its own hidden `Shell_TrayWnd` window above Explorer's, tray apps send their icon messages to it, and it passes everything it does not handle on to Explorer's window. Explorer keeps running.
 
-Current state: the window is created, the icon packets are decoded, and every packet is a line in `jtb.log`. The icons are drawn in the bar `tray.bar` (index in `bars`), just before the clock: one row on top and bottom bars, a grid on side bars. Hovering one highlights it. Tooltips and clicks are not done yet, so the icons cannot be used. Leave `enabled` false (the default) for daily use.
+Current state: the window is created, the icon packets are decoded, and every packet is a line in `jtb.log`. The icons are drawn in the bar `tray.bar` (index in `bars`), just before the clock: one row on top and bottom bars, a grid on side bars. Hovering one highlights it and shows its tooltip, and clicks and hover are passed on to the app that owns the icon. Leave `enabled` false (the default) for daily use.
+
+`"hide": ["msrdc.exe"]` drops the icons of the listed executables (names, any case). An app that sends only modify messages (the WSL Remote Desktop one does) gets an icon on the bar although Explorer's own tray shows none; list it here. The list is read when an icon packet arrives, so icons already shown stay until the app is restarted.
 
 ## What to look for in `jtb.log`
 
