@@ -598,9 +598,11 @@ pub fn note_start_bar(edge: Edge, rect: RECT) {
     START_BAR.set(Some((abe, rect)));
 }
 
-fn on_taskbar_pos() -> Option<(u32, RECT)> {
+fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
     let pos = START_BAR.get()?;
-    log(&format!("start: taskbar position asked -> {pos:?}"));
+    log(&format!(
+        "start: taskbar position asked by process {process} -> {pos:?}"
+    ));
     Some(pos)
 }
 
@@ -616,6 +618,17 @@ fn run_start(config: &StartConfig) {
         ));
     }
     launch_app(&config.command, &config.args);
+    std::thread::spawn(|| {
+        let started = std::time::Instant::now();
+        for _ in 0..8 {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            log(&format!(
+                "start: +{} ms Open-Shell button at {:?}",
+                started.elapsed().as_millis(),
+                startmenu::button_rect()
+            ));
+        }
+    });
 }
 
 /// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.

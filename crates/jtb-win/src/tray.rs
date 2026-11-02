@@ -27,7 +27,7 @@ const POSTED_MESSAGE: u32 = WM_USER + 372;
 type Handler = Box<dyn Fn(&[u8]) -> bool>;
 type QueryHandler = Box<dyn Fn(&[u8]) -> Option<isize>>;
 /// The edge (`ABE_*`) and screen rectangle to report as the taskbar position, if any.
-type PosHandler = Box<dyn Fn() -> Option<(u32, RECT)>>;
+type PosHandler = Box<dyn Fn(u32) -> Option<(u32, RECT)>>;
 
 thread_local! {
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
@@ -111,7 +111,8 @@ extern "system" fn tray_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                     };
                     if let Some(call) = parse_appbar_call(bytes) {
                         if call.message == ABM_GETTASKBARPOS {
-                            let pos = POS_HANDLER.with_borrow(|h| h.as_ref().and_then(|h| h()));
+                            let pos = POS_HANDLER
+                                .with_borrow(|h| h.as_ref().and_then(|h| h(call.process)));
                             if let Some((edge, rc)) = pos {
                                 if answer_taskbar_pos(call, edge, rc) {
                                     return LRESULT(1);
@@ -194,11 +195,12 @@ fn set_topmost(hwnd: HWND) {
 /// and tells every app to send its icons again. `handler` gets the notify icon packets (the
 /// `SHELLTRAYDATA` bytes) and returns whether it took the packet. `query` gets the icon rectangle
 /// queries and returns the answer, or none to leave it to Explorer. `taskbar_pos` answers the
-/// AppBar call that asks where the taskbar is. Everything else goes to Explorer's window.
+/// AppBar call that asks where the taskbar is, given the caller's process id. Everything else
+/// goes to Explorer's window.
 pub fn create(
     handler: impl Fn(&[u8]) -> bool + 'static,
     query: impl Fn(&[u8]) -> Option<isize> + 'static,
-    taskbar_pos: impl Fn() -> Option<(u32, RECT)> + 'static,
+    taskbar_pos: impl Fn(u32) -> Option<(u32, RECT)> + 'static,
 ) -> Result<(), String> {
     if is_active() {
         return Ok(());
