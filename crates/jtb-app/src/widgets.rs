@@ -16,10 +16,10 @@ const WHITE: [u8; 3] = [255, 255, 255];
 
 /// What a click asks the app to do, once the widget list is no longer borrowed.
 pub enum Action {
-    /// Open a URI such as `ms-settings:sound`.
-    Open(&'static str),
     /// The quick settings panel (Win+A).
     QuickSettings,
+    /// The input language popup (Win+Space).
+    InputSwitcher,
 }
 
 pub trait Widget {
@@ -69,7 +69,7 @@ impl Widget for Language {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::Open("ms-settings:regionlanguage"))
+        Some(Action::InputSwitcher)
     }
 }
 
@@ -298,12 +298,12 @@ pub fn tooltip(at: usize) -> Option<String> {
 
 /// A left click on the `at`th shown widget.
 pub fn click(at: usize) {
-    // Opening a URI can pump messages, which re-enter `refresh`, so the borrow must be over.
+    // An action can pump messages, which re-enter `refresh`, so the borrow must be over.
     let action =
         CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
     match action {
-        Some(Action::Open(uri)) => crate::open_uri(uri),
         Some(Action::QuickSettings) => system::open_quick_settings(),
+        Some(Action::InputSwitcher) => system::open_input_switcher(),
         None => {}
     }
 }

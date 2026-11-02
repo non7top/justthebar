@@ -873,11 +873,6 @@ fn launch_app(path: &str, args: &[String]) {
     }
 }
 
-/// Opens a URI such as `ms-settings:sound` with its registered app.
-fn open_uri(uri: &str) {
-    launch_app(uri, &[]);
-}
-
 fn exe_of(id: isize) -> String {
     TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()).unwrap_or_default())
 }
