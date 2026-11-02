@@ -618,7 +618,16 @@ fn run_start(config: &StartConfig) {
             "start: Open-Shell button asked to move to {rect:?}, now at {moved:?}"
         ));
     }
-    launch_app(&config.command, &config.args);
+    let toggle = config
+        .command
+        .to_ascii_lowercase()
+        .ends_with("startmenu.exe")
+        && config.args.iter().any(|arg| arg == "-toggle");
+    if toggle && startmenu::post_toggle() {
+        log("start: posted the toggle message to Explorer's taskbar");
+    } else {
+        launch_app(&config.command, &config.args);
+    }
     if let Some(rect) = held {
         std::thread::spawn(move || hold_start_button(rect));
     }

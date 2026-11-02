@@ -2,10 +2,10 @@
 //! With that taskbar hidden the button sits at the bottom-left, so the menu would open there;
 //! moving the button under our Start button just before the toggle makes the menu follow it.
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindow, GetWindowRect, GetWindowThreadProcessId, SetWindowPos, GW_OWNER,
-    SWP_NOACTIVATE, SWP_NOZORDER,
+    FindWindowExW, GetWindow, GetWindowRect, GetWindowThreadProcessId, PostMessageW,
+    RegisterWindowMessageW, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 
 fn buttons() -> Vec<HWND> {
@@ -62,4 +62,15 @@ pub fn move_button(to: RECT) -> Option<RECT> {
         }
     }
     button_rect()
+}
+
+/// Asks the Open-Shell hook inside Explorer to toggle its menu, the same message
+/// `StartMenu.exe -toggle` posts to Explorer's taskbar after it has started up. Returns whether
+/// the message was posted.
+pub fn post_toggle() -> bool {
+    let Some(tray) = crate::tray::explorer_tray() else {
+        return false;
+    };
+    let message = unsafe { RegisterWindowMessageW(w!("OpenShellMenu.StartMenuMsg")) };
+    message != 0 && unsafe { PostMessageW(Some(tray), message, WPARAM(0), LPARAM(0)) }.is_ok()
 }
