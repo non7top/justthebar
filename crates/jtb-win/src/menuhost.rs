@@ -12,10 +12,11 @@ use windows::Win32::System::ApplicationInstallationAndServicing::{
 use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LoadLibraryW, LOAD_WITH_ALTERED_SEARCH_PATH,
 };
+use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, GetClassNameW, SendMessageW, SetWindowPos, SetWindowsHookExW,
-    UnhookWindowsHookEx, CWPSTRUCT, SWP_NOACTIVATE, SWP_NOZORDER, WH_CALLWNDPROC,
-    WM_WINDOWPOSCHANGING, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CallNextHookEx, CreateWindowExW, FindWindowW, GetClassNameW, GetWindowRect, SendMessageW,
+    SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx, CWPSTRUCT, SWP_NOACTIVATE, SWP_NOZORDER,
+    WH_CALLWNDPROC, WM_WINDOWPOSCHANGING, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 #[link(name = "ole32")]
@@ -221,6 +222,25 @@ pub fn toggle(dll: &str, params: StartMenuParams) -> Result<(), String> {
         let _ = UnhookWindowsHookEx(hook);
     }
     Ok(())
+}
+
+/// What Windows says about the anchor window and the menu window after a toggle, for the log.
+pub fn describe() -> String {
+    let anchor = HOST.with_borrow(|h| h.as_ref().map(|host| host.anchor));
+    let mut text = String::new();
+    if let Some(anchor) = anchor {
+        let mut rect = RECT::default();
+        let _ = unsafe { GetWindowRect(anchor, &mut rect) };
+        text += &format!("anchor {rect:?} dpi {} ", unsafe {
+            GetDpiForWindow(anchor)
+        });
+    }
+    if let Ok(menu) = unsafe { FindWindowW(w!("OpenShell.CMenuContainer"), PCWSTR::null()) } {
+        let mut rect = RECT::default();
+        let _ = unsafe { GetWindowRect(menu, &mut rect) };
+        text += &format!("menu {rect:?} dpi {}", unsafe { GetDpiForWindow(menu) });
+    }
+    text
 }
 
 /// Stops the worker threads Open-Shell's code started; call once before the process exits.

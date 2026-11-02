@@ -618,7 +618,10 @@ fn run_start(config: &StartConfig) {
     if let Some(button) = held.filter(|_| config.in_process) {
         match open_in_process(config, button) {
             Ok(()) => {
-                log("start: opened Open-Shell's menu in this process");
+                log(&format!(
+                    "start: opened Open-Shell's menu in this process: {}",
+                    menuhost::describe()
+                ));
                 return;
             }
             Err(error) => log(&format!("start: in-process menu failed: {error}")),
