@@ -201,7 +201,7 @@ fn apply(config: &Config, force_hide_explorer: bool) {
             )),
         }
     }
-    bar::build(planned, hide && !explorer::autohide_active(), config);
+    bar::build(planned, hide && !explorer::startup_autohide(), config);
     sync_tray(config.tray.enabled);
 }
 

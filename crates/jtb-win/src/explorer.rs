@@ -102,9 +102,10 @@ pub fn startup_state() -> Option<u32> {
     Some(STARTUP_STATE.load(Ordering::SeqCst)).filter(|state| *state != UNSET)
 }
 
-/// True when Explorer's taskbar is in auto-hide, in which case it reserves no screen space.
-pub fn autohide_active() -> bool {
-    get_state().is_some_and(|state| state & ABS_AUTOHIDE != 0)
+/// True when Explorer's taskbar was already in auto-hide before the first `hide`, so it reserved
+/// no screen space at startup.
+pub fn startup_autohide() -> bool {
+    startup_state().is_some_and(|state| state & ABS_AUTOHIDE != 0)
 }
 
 /// Hides the taskbar again if Explorer brought it back (it does so when appbars change).
