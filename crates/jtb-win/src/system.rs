@@ -248,31 +248,27 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Shows the input language popup and switches to the next layout, the way Win+Space does; the
-/// Windows key is held for a moment so the popup stays up.
+/// Switches to the next input layout and shows the language popup, the way Win+Space does.
 pub fn open_input_switcher() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
         VIRTUAL_KEY, VK_LWIN, VK_SPACE,
     };
-    fn send(code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) {
-        let input = INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: code,
-                    dwFlags: flags,
-                    ..Default::default()
-                },
+    let key = |code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: code,
+                dwFlags: flags,
+                ..Default::default()
             },
-        };
-        unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
-    }
-    send(VK_LWIN, KEYBD_EVENT_FLAGS(0));
-    send(VK_SPACE, KEYBD_EVENT_FLAGS(0));
-    send(VK_SPACE, KEYEVENTF_KEYUP);
-    std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
-        send(VK_LWIN, KEYEVENTF_KEYUP);
-    });
+        },
+    };
+    let inputs = [
+        key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+        key(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
+        key(VK_SPACE, KEYEVENTF_KEYUP),
+        key(VK_LWIN, KEYEVENTF_KEYUP),
+    ];
+    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
