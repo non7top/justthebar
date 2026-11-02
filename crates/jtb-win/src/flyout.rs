@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use jtb_core::Edge;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetWindowRect, IsWindowVisible, SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
@@ -128,8 +130,18 @@ pub fn tick() -> Option<String> {
             )
         };
         if first {
+            let mut visual = RECT::default();
+            let visual = unsafe {
+                DwmGetWindowAttribute(
+                    window,
+                    DWMWA_EXTENDED_FRAME_BOUNDS,
+                    &mut visual as *mut RECT as *mut _,
+                    size_of::<RECT>() as u32,
+                )
+            }
+            .map(|()| visual);
             return Some(format!(
-                "flyout: ControlCenterWindow was at {rect:?}, moved to ({x}, {y}): {moved:?}"
+                "flyout: ControlCenterWindow was at {rect:?}, moved to ({x}, {y}): {moved:?}, frame bounds after: {visual:?}"
             ));
         }
     }
