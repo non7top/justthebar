@@ -143,6 +143,9 @@ pub struct StartConfig {
     pub image: String,
     /// Longest side of the art button in pixels at 100% scale; a thinner bar makes it smaller.
     pub size: u32,
+    /// Opens Open-Shell's menu from a copy of its library loaded into this app, which lets the
+    /// bar say exactly where the menu goes; falls back to `command` when that fails.
+    pub in_process: bool,
 }
 
 impl Default for StartConfig {
@@ -154,6 +157,7 @@ impl Default for StartConfig {
             label: "Start".to_string(),
             image: "start-button.png".to_string(),
             size: 54,
+            in_process: false,
         }
     }
 }

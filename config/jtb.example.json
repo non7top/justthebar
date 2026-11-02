@@ -25,7 +25,8 @@
     "args": ["-toggle"],
     "label": "Start",
     "image": "start-button.png",
-    "size": 54
+    "size": 54,
+    "in_process": false
   },
   "tray": {
     "enabled": false,

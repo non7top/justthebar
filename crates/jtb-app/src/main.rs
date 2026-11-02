@@ -19,7 +19,7 @@ use jtb_core::tasks::{Task, Tasks};
 use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons, TrayKey};
 use jtb_core::traypacket;
 use jtb_core::Edge;
-use jtb_win::{explorer, monitors, shell, startmenu, tasks, tray};
+use jtb_win::{explorer, menuhost, monitors, shell, startmenu, tasks, tray};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -66,6 +66,7 @@ thread_local! {
     static START_RECT: Cell<Option<RECT>> = const { Cell::new(None) };
     /// The edge (`ABE_*`) and screen rectangle of the bar whose Start button was clicked last.
     static START_BAR: Cell<Option<(u32, RECT)>> = const { Cell::new(None) };
+    static START_BAR_WINDOW: Cell<isize> = const { Cell::new(0) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -588,7 +589,8 @@ pub fn note_start_rect(rect: RECT) {
 
 /// Remembers which bar the Start button was clicked on: Open-Shell asks where the taskbar is and
 /// opens the menu on that side.
-pub fn note_start_bar(edge: Edge, rect: RECT) {
+pub fn note_start_bar(edge: Edge, rect: RECT, window: HWND) {
+    START_BAR_WINDOW.set(window.0 as isize);
     let abe = match edge {
         Edge::Left => 0,
         Edge::Top => 1,
@@ -612,6 +614,15 @@ fn run_start(config: &StartConfig) {
         config.command, config.args
     ));
     let held = START_RECT.take();
+    if let Some(button) = held.filter(|_| config.in_process) {
+        match open_in_process(config, button) {
+            Ok(()) => {
+                log("start: opened Open-Shell's menu in this process");
+                return;
+            }
+            Err(error) => log(&format!("start: in-process menu failed: {error}")),
+        }
+    }
     if let Some(rect) = held {
         let moved = startmenu::move_button(rect);
         log(&format!(
@@ -631,6 +642,36 @@ fn run_start(config: &StartConfig) {
     if let Some(rect) = held {
         std::thread::spawn(move || hold_start_button(rect));
     }
+}
+
+fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let (edge, bar) = START_BAR.get().ok_or("no bar was clicked")?;
+    let monitor = unsafe { MonitorFromRect(&bar, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return Err("no monitor information".to_string());
+    }
+    let dll = std::path::Path::new(&config.command)
+        .parent()
+        .ok_or("the start command has no folder")?
+        .join("StartMenuDLL.dll");
+    menuhost::toggle(
+        &dll.to_string_lossy(),
+        menuhost::StartMenuParams {
+            start_button: HWND::default(),
+            taskbar: HWND(START_BAR_WINDOW.get() as *mut _),
+            start_button_rect: button,
+            taskbar_rect: bar,
+            monitor_rect: info.rcWork,
+            edge,
+        },
+    )
 }
 
 /// Open-Shell puts its button back about 200 ms after a click and reads it for the menu position

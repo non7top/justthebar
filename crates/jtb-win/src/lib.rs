@@ -1,5 +1,6 @@
 pub mod appbar;
 pub mod explorer;
+pub mod menuhost;
 pub mod monitors;
 pub mod shell;
 pub mod startmenu;

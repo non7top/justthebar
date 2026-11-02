@@ -420,7 +420,7 @@ fn note_start_rect(hwnd: HWND, bar: AppBar) {
     unsafe {
         let _ = GetWindowRect(hwnd, &mut window);
     }
-    crate::note_start_bar(bar.edge(), window);
+    crate::note_start_bar(bar.edge(), window, hwnd);
     crate::note_start_rect(RECT {
         left: origin.x + rect.left as i32,
         top: origin.y + rect.top as i32,
