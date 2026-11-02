@@ -10,8 +10,9 @@ use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetClassNameW, SendMessageW, SetWindowsHookExW, UnhookWindowsHookEx, CWPSTRUCT,
-    WH_CALLWNDPROC, WM_WINDOWPOSCHANGING,
+    CallNextHookEx, CreateWindowExW, GetClassNameW, SendMessageW, SetWindowPos, SetWindowsHookExW,
+    UnhookWindowsHookEx, CWPSTRUCT, SWP_NOACTIVATE, SWP_NOZORDER, WH_CALLWNDPROC,
+    WM_WINDOWPOSCHANGING, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 #[link(name = "ole32")]
@@ -37,11 +38,16 @@ type Proc = unsafe extern "system" fn() -> isize;
 struct Host {
     toggle: ToggleFn,
     message: u32,
+    /// Open-Shell's `g_TaskBar`, which the first toggle copies as the window it measures the
+    /// monitor and DPI from.
+    taskbar_slot: *mut HWND,
+    anchor: HWND,
 }
 
 thread_local! {
     static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
     static FAILED: Cell<bool> = const { Cell::new(false) };
+    static FIRST_DONE: Cell<bool> = const { Cell::new(false) };
     static PENDING: Cell<Option<(u32, StartMenuParams)>> = const { Cell::new(None) };
 }
 
@@ -54,9 +60,25 @@ fn load(dll: &str) -> Result<Host, String> {
         let wait = GetProcAddress(module, s!("?WaitDllInitThread@@YAXXZ"));
         let init = GetProcAddress(module, s!("?InitManagers@@YAX_N@Z"));
         let toggle = GetProcAddress(module, s!("?ToggleStartMenu@@YAPEAUHWND__@@H_N@Z"));
-        let (Some(wait), Some(init), Some(toggle)) = (wait, init, toggle) else {
+        let slot = GetProcAddress(module, s!("?g_TaskBar@@3PEAUHWND__@@EA"));
+        let (Some(wait), Some(init), Some(toggle), Some(slot)) = (wait, init, toggle, slot) else {
             return Err("the library does not export the expected functions".to_string());
         };
+        let anchor = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            w!("STATIC"),
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(|e| format!("cannot create the anchor window: {e}"))?;
         OleInitialize(std::ptr::null_mut());
         let wait = std::mem::transmute::<Proc, unsafe extern "C" fn()>(wait);
         let init = std::mem::transmute::<Proc, unsafe extern "C" fn(bool)>(init);
@@ -67,6 +89,8 @@ fn load(dll: &str) -> Result<Host, String> {
             message: windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW(w!(
                 "OpenShellMenu.StartMenuMsg"
             )),
+            taskbar_slot: slot as *mut HWND,
+            anchor,
         })
     }
 }
@@ -110,15 +134,32 @@ pub fn toggle(dll: &str, params: StartMenuParams) -> Result<(), String> {
             }
         }
     }
-    let (toggle, message) = HOST.with_borrow(|h| {
+    let (toggle, message, slot, anchor) = HOST.with_borrow(|h| {
         let host = h.as_ref().expect("host loaded");
-        (host.toggle, host.message)
+        (host.toggle, host.message, host.taskbar_slot, host.anchor)
     });
+    unsafe {
+        let _ = SetWindowPos(
+            anchor,
+            None,
+            params.start_button_rect.left,
+            params.start_button_rect.top,
+            1,
+            1,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        );
+        if !FIRST_DONE.get() {
+            *slot = anchor;
+        }
+    }
     PENDING.set(Some((message, params)));
     let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
     let hook = unsafe { SetWindowsHookExW(WH_CALLWNDPROC, Some(hook), None, thread) }
         .map_err(|e| format!("cannot hook the menu window: {e}"))?;
     unsafe { toggle(-1, false) };
+    if !FIRST_DONE.replace(true) {
+        unsafe { *slot = HWND::default() };
+    }
     PENDING.set(None);
     unsafe {
         let _ = UnhookWindowsHookEx(hook);
