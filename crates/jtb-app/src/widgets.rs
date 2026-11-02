@@ -308,7 +308,12 @@ pub fn click(at: usize) {
         CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
     match action {
         Some(Action::QuickSettings) => {
-            if jtb_win::flyout::just_dismissed() {
+            let dismissed = jtb_win::flyout::just_dismissed();
+            crate::log(&format!(
+                "flyout: click, {}, skipping Win+A: {dismissed}",
+                jtb_win::flyout::describe()
+            ));
+            if dismissed {
                 return;
             }
             if let Some(anchor) = crate::bar::flyout_anchor() {

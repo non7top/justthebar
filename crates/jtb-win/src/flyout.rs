@@ -48,6 +48,15 @@ pub fn just_dismissed() -> bool {
             .is_some_and(|at| at.elapsed() < Duration::from_millis(600))
 }
 
+/// The flyout's state at a click, for the log.
+pub fn describe() -> String {
+    format!(
+        "visible {}, last seen {:?} ago",
+        visible_flyout().is_some(),
+        LAST_OPEN.get().map(|at| at.elapsed())
+    )
+}
+
 /// A flyout is about to open next to `anchor`.
 pub fn expect(anchor: Anchor) {
     PENDING.set(Some(Pending {
