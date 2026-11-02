@@ -283,7 +283,7 @@ pub fn build_scene_with_widgets(
         let mut text = *cell;
         let mut centered = true;
         if let Some(symbol) = &view.symbol {
-            let size = 16.0 * scale;
+            let size = 20.0 * scale;
             let left = if view.label.is_empty() {
                 (cell.left + cell.right - size) / 2.0
             } else {

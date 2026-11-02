@@ -18,9 +18,9 @@ pub fn bar_length(state: &WidgetState) -> f32 {
     let symbol = if state.symbol.is_empty() {
         0.0
     } else if text > 0.0 {
-        20.0
+        24.0
     } else {
-        16.0
+        20.0
     };
     (12.0 + symbol + text).max(28.0)
 }

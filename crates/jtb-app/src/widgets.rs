@@ -18,8 +18,8 @@ const WHITE: [u8; 3] = [255, 255, 255];
 pub enum Action {
     /// The quick settings panel (Win+A).
     QuickSettings,
-    /// The input language popup (Win+Space).
-    InputSwitcher,
+    /// Switch to the next input language.
+    NextLanguage,
 }
 
 pub trait Widget {
@@ -69,7 +69,7 @@ impl Widget for Language {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::InputSwitcher)
+        Some(Action::NextLanguage)
     }
 }
 
@@ -160,11 +160,11 @@ thread_local! {
     static CELLS: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
 }
 
-fn draw(font: &str, text: &str, tint: [u8; 3]) -> Option<Arc<Icon>> {
+fn draw(font: &str, text: &str, em: u32, tint: [u8; 3]) -> Option<Arc<Icon>> {
     if text.is_empty() {
         return None;
     }
-    let bgra = glyph::render(font, text, BITMAP_SIZE, tint)?;
+    let bgra = glyph::render(font, text, BITMAP_SIZE, em, tint)?;
     Some(Arc::new(Icon {
         id: crate::next_icon_id(),
         width: BITMAP_SIZE,
@@ -175,8 +175,13 @@ fn draw(font: &str, text: &str, tint: [u8; 3]) -> Option<Arc<Icon>> {
 
 fn show(state: WidgetState) -> Shown {
     Shown {
-        symbol: draw(SYMBOL_FONT, &state.symbol, state.tint.unwrap_or(WHITE)),
-        label: draw(TEXT_FONT, &state.label, WHITE),
+        symbol: draw(
+            SYMBOL_FONT,
+            &state.symbol,
+            BITMAP_SIZE,
+            state.tint.unwrap_or(WHITE),
+        ),
+        label: draw(TEXT_FONT, &state.label, BITMAP_SIZE * 3 / 4, WHITE),
         state,
     }
 }
@@ -303,7 +308,7 @@ pub fn click(at: usize) {
         CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
     match action {
         Some(Action::QuickSettings) => system::open_quick_settings(),
-        Some(Action::InputSwitcher) => system::open_input_switcher(),
+        Some(Action::NextLanguage) => system::next_input_language(),
         None => {}
     }
 }

@@ -1,5 +1,6 @@
 //! Small reads of system state for the bar widgets.
 use jtb_core::widget::Network;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME2};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
@@ -248,27 +249,28 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Switches to the next input layout and shows the language popup, the way Win+Space does.
-pub fn open_input_switcher() {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_LWIN, VK_SPACE,
+/// Switches the foreground window to the next installed input layout.
+pub fn next_input_language() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardLayoutList, HKL};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_INPUTLANGCHANGEREQUEST};
+    let window = unsafe { GetForegroundWindow() };
+    let thread = unsafe { GetWindowThreadProcessId(window, None) };
+    let current = unsafe { GetKeyboardLayout(thread) };
+    let count = unsafe { GetKeyboardLayoutList(None) };
+    if count < 2 {
+        return;
+    }
+    let mut layouts = vec![HKL::default(); count as usize];
+    let count = unsafe { GetKeyboardLayoutList(Some(&mut layouts)) } as usize;
+    layouts.truncate(count);
+    let at = layouts.iter().position(|l| *l == current).unwrap_or(0);
+    let next = layouts[(at + 1) % layouts.len()];
+    let _ = unsafe {
+        PostMessageW(
+            Some(window),
+            WM_INPUTLANGCHANGEREQUEST,
+            WPARAM(0),
+            LPARAM(next.0 as isize),
+        )
     };
-    let key = |code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: code,
-                dwFlags: flags,
-                ..Default::default()
-            },
-        },
-    };
-    let inputs = [
-        key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
-        key(VK_SPACE, KEYBD_EVENT_FLAGS(0)),
-        key(VK_SPACE, KEYEVENTF_KEYUP),
-        key(VK_LWIN, KEYEVENTF_KEYUP),
-    ];
-    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
