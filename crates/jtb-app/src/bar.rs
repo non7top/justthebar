@@ -19,11 +19,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowRect, KillTimer,
-    LoadCursorW, RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW,
-    MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_ACTIVATE,
-    WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
-    WM_TIMER, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    LoadCursorW, RegisterClassW, RegisterWindowMessageW, SetTimer, SetWindowPos, ShowWindow,
+    HWND_TOPMOST, IDC_ARROW, MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER, WM_WINDOWPOSCHANGED, WNDCLASSW,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
@@ -556,10 +557,24 @@ fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) -> Option<usi
     before
 }
 
+fn taskbar_created_message() -> u32 {
+    static MESSAGE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
+
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let bar = bar_for(hwnd);
     unsafe {
         match msg {
+            _ if msg == taskbar_created_message() => {
+                if let Some(bar) = bar {
+                    log(&format!(
+                        "TaskbarCreated: bar registered again {}",
+                        bar.reregister()
+                    ));
+                }
+                LRESULT(0)
+            }
             _ if bar.is_some_and(|b| b.callback_message() == msg) => {
                 if let Some(bar) = bar {
                     bar.on_callback(wparam.0, lparam.0);

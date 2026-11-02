@@ -21,6 +21,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// The `Shell_TrayWnd` window of this process, 0 when we do not hold the role.
 static OURS: AtomicIsize = AtomicIsize::new(0);
 
+/// Explorer's `Shell_TrayWnd` as last seen; a different one means Explorer restarted.
+static EXPLORER: AtomicIsize = AtomicIsize::new(0);
+
 /// Explorer posts this one to its own tray window; sending it blocks both sides.
 const POSTED_MESSAGE: u32 = WM_USER + 372;
 
@@ -264,6 +267,7 @@ pub fn create(
     }
     OURS.store(tray.0 as isize, Ordering::SeqCst);
     if let Some(explorer) = explorer_tray() {
+        EXPLORER.store(explorer.0 as isize, Ordering::SeqCst);
         set_bottom(explorer);
     }
     set_topmost(tray);
@@ -309,6 +313,23 @@ pub fn keep_on_top() -> bool {
         return false;
     }
     set_topmost(own);
+    true
+}
+
+/// Called on a timer: when Explorer has a new `Shell_TrayWnd` (it restarted), sends it to the
+/// bottom, raises ours and tells every app to send its icons again. Returns true when it did.
+pub fn follow_explorer() -> bool {
+    let Some(own) = ours() else { return false };
+    let Some(explorer) = explorer_tray() else {
+        return false;
+    };
+    let seen = EXPLORER.swap(explorer.0 as isize, Ordering::SeqCst);
+    if seen == 0 || seen == explorer.0 as isize {
+        return false;
+    }
+    set_bottom(explorer);
+    set_topmost(own);
+    send_taskbar_created();
     true
 }
 

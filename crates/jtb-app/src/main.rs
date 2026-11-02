@@ -223,6 +223,13 @@ fn sync_tray(enabled: bool) {
 }
 
 /// A notify icon packet from the tray window. Returns whether it was taken.
+/// Apps that crash never delete their icon; forget the icons whose owner window is gone.
+fn drop_dead_tray_icons() {
+    if TRAY_ICONS.with_borrow_mut(|icons| icons.drop_dead(tray::owner_alive)) {
+        log("tray: dropped icons of exited apps");
+    }
+}
+
 fn on_tray_packet(data: &[u8]) -> bool {
     let Some(packet) = traypacket::parse_notify(data) else {
         log(&format!("tray: packet of {} bytes ignored", data.len()));
@@ -1192,6 +1199,7 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                 }
                 TIMER_CLOCK => {
+                    drop_dead_tray_icons();
                     sync_tasks();
                     bar::invalidate_all();
                     let now = explorer::snapshot();
@@ -1204,6 +1212,9 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 }
                 TIMER_ZORDER => {
                     bar::keep_above_explorer();
+                    if tray::follow_explorer() {
+                        log("tray: Explorer restarted, took the tray role again");
+                    }
                     if tray::keep_on_top() {
                         log("tray: raised our Shell_TrayWnd");
                     }
