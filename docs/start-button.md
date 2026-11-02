@@ -22,10 +22,17 @@ In `jtb.json`:
 Every key but `enabled` is optional and the values above are the defaults.
 
 Menu position: Open-Shell opens its menu next to its own button, a popup window owned by
-Explorer's hidden taskbar. On a click the bar moves that button under its Start button, then runs
-the command. The log line `start: Open-Shell button asked to move to ..., now at ...` shows where
-the button ended up. Which side of the button the menu grows to still follows the edge of
-Explorer's taskbar (the bottom), so on a side bar the menu can overlap the bar.
+Explorer's hidden taskbar. On a click the bar moves that button under its Start button, remembers
+which bar was clicked and answers Open-Shell's "where is the taskbar" question with that bar's
+edge and rectangle, then runs the command. The log lines `start: Open-Shell button asked to move
+to ..., now at ...` and `start: taskbar position asked -> ...` show both.
+
+Open-Shell still limits a side taskbar to the height of Explorer's own taskbar window, which is a
+thin strip at the bottom while hidden, and Explorer puts that window back whenever it is resized.
+The menu is then squeezed to that strip. Turn on "Align start menu to working area" in the Open-Shell
+settings (tick "Show all settings"; its help text says "Use with custom taskbars"): the menu then
+uses the screen's work area, which already excludes the bars, and opens at the height of the
+button on the side of the bar that faces into the screen.
 
 ## Look
 
