@@ -37,6 +37,7 @@ thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     static LOGGED: Cell<bool> = const { Cell::new(false) };
     static LAST_OPEN: Cell<Option<Instant>> = const { Cell::new(None) };
+    static CLOSING: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
 /// True when the flyout closed a moment ago: a click on the bar takes focus and dismisses it, so a
@@ -56,6 +57,7 @@ pub fn is_open() -> bool {
 /// The flyout is about to be closed: stop moving it, or the closing window gets pulled back.
 pub fn leave_alone() {
     PENDING.set(None);
+    CLOSING.set(Some(Instant::now()));
 }
 
 /// The flyout's state at a click, for the log.
@@ -126,6 +128,17 @@ pub fn tick() -> Option<String> {
     let visible = visible_flyout();
     if visible.is_some() {
         LAST_OPEN.set(Some(Instant::now()));
+    }
+    if let Some(clicked) = CLOSING.get() {
+        let waited = clicked.elapsed();
+        if visible.is_none() {
+            CLOSING.set(None);
+            return Some(format!("flyout: closed {waited:?} after the click"));
+        }
+        if waited > Duration::from_millis(800) {
+            CLOSING.set(None);
+            return Some(format!("flyout: still open {waited:?} after the click"));
+        }
     }
     let (anchor, since, seen, repositioned) = PENDING.with_borrow(|p| {
         p.as_ref()

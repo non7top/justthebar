@@ -317,8 +317,11 @@ pub fn click(at: usize) {
                 return;
             }
             if jtb_win::flyout::is_open() {
+                // The click outside the flyout already dismisses it; Win+A would reopen it.
                 jtb_win::flyout::leave_alone();
-            } else if let Some(anchor) = crate::bar::flyout_anchor() {
+                return;
+            }
+            if let Some(anchor) = crate::bar::flyout_anchor() {
                 jtb_win::flyout::expect(anchor);
             }
             system::open_quick_settings();
