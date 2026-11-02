@@ -609,6 +609,12 @@ fn run_start(config: &StartConfig) {
         "start button: {} {:?}",
         config.command, config.args
     ));
+    if let Some((_, bar)) = START_BAR.get() {
+        let fitted = startmenu::fit_explorer_tray(bar);
+        log(&format!(
+            "start: Explorer taskbar window asked to cover {bar:?}, was/now {fitted:?}"
+        ));
+    }
     if let Some(rect) = START_RECT.take() {
         let moved = startmenu::move_button(rect);
         log(&format!(
