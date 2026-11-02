@@ -1,5 +1,6 @@
 pub mod appbar;
 pub mod explorer;
+pub mod flyout;
 pub mod glyph;
 pub mod menuhost;
 pub mod monitors;

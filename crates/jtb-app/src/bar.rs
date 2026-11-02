@@ -227,6 +227,41 @@ pub fn invalidate_all() {
     }
 }
 
+/// Where the flyout of a widget clicked just now belongs: the bar under the cursor.
+pub fn flyout_anchor() -> Option<jtb_win::flyout::Anchor> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    let mut click = POINT::default();
+    unsafe { GetCursorPos(&mut click) }.ok()?;
+    BARS.with_borrow(|bars| {
+        bars.iter().find_map(|b| {
+            let mut bar = RECT::default();
+            unsafe { GetWindowRect(b.hwnd, &mut bar) }.ok()?;
+            let inside = click.x >= bar.left
+                && click.x < bar.right
+                && click.y >= bar.top
+                && click.y < bar.bottom;
+            if !inside {
+                return None;
+            }
+            let mut info = MONITORINFO {
+                cbSize: size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            let monitor = unsafe { MonitorFromWindow(b.hwnd, MONITOR_DEFAULTTONEAREST) };
+            unsafe { GetMonitorInfoW(monitor, &mut info) }.ok().ok()?;
+            Some(jtb_win::flyout::Anchor {
+                edge: b.bar.edge(),
+                bar,
+                monitor: info.rcMonitor,
+                click,
+            })
+        })
+    })
+}
+
 fn bar_for(hwnd: HWND) -> Option<AppBar> {
     BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).map(|b| b.bar))
 }

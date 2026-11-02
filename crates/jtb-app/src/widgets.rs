@@ -307,7 +307,12 @@ pub fn click(at: usize) {
     let action =
         CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
     match action {
-        Some(Action::QuickSettings) => system::open_quick_settings(),
+        Some(Action::QuickSettings) => {
+            if let Some(anchor) = crate::bar::flyout_anchor() {
+                jtb_win::flyout::expect(anchor);
+            }
+            system::open_quick_settings();
+        }
         Some(Action::NextLanguage) => system::next_input_language(),
         None => {}
     }
