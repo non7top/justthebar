@@ -4,7 +4,7 @@
     { "monitor": 0, "edge": "right", "size": 200 },
     { "monitor": 1, "edge": "left", "size": 120 }
   ],
-  "start": { "enabled": true, "image": "start-button_large.png", "in_process": true },
+  "start": { "enabled": true, "image": "start-button_large.png" },
   "tray": { "enabled": true, "bar": 0 },
   "pins": [
     { "name": "Notepad", "path": "C:\\Windows\\notepad.exe" }

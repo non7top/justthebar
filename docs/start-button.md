@@ -16,7 +16,7 @@ In `jtb.json`:
   "label": "Start",
   "image": "start-button.png",
   "size": 54,
-  "in_process": false
+  "in_process": true
 }
 ```
 
@@ -27,7 +27,7 @@ Every key but `enabled` is optional and the values above are the defaults.
 Open-Shell works out where to put its menu from Explorer's own (hidden) taskbar, so on a custom bar
 the menu lands at the bottom-left or off screen. Two ways around that:
 
-`"in_process": true` (recommended). The bar loads Open-Shell's `StartMenuDLL.dll` (next to the
+`"in_process": true` (the default). The bar loads Open-Shell's `StartMenuDLL.dll` (next to the
 `command`) into its own process, the way `StartMenu.exe -nohook` does, and opens the menu there. It
 tells the menu the clicked bar's edge, the bar's and the button's rectangles and the monitor's
 work area, through the placement message Open-Shell documents in `MenuContainer.h`. The menu then
@@ -42,7 +42,7 @@ there before each open). That only works because `jtb-app.exe` carries a `suppor
 (`crates/jtb-app/jtb-app.manifest`, compiled by `build.rs` with `x86_64-w64-mingw32-windres`):
 without it Windows reports version 6.2 and Open-Shell skips its per-monitor DPI code.
 
-Default (`"in_process": false`). A click moves Open-Shell's own button under the bar's button,
+Fallback (`"in_process": false`, or when the library cannot be loaded). A click moves Open-Shell's own button under the bar's button,
 answers Open-Shell's "where is the taskbar" question with the clicked bar, and posts Open-Shell's
 toggle message to Explorer's taskbar (what `StartMenu.exe -toggle` does). Open-Shell asks twice
 and the second question sometimes goes to Explorer's taskbar, so the menu opens in the right place

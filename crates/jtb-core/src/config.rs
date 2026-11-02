@@ -157,7 +157,7 @@ impl Default for StartConfig {
             label: "Start".to_string(),
             image: "start-button.png".to_string(),
             size: 54,
-            in_process: false,
+            in_process: true,
         }
     }
 }
