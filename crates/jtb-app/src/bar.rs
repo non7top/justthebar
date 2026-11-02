@@ -253,6 +253,7 @@ pub fn flyout_anchor() -> Option<jtb_win::flyout::Anchor> {
             let monitor = unsafe { MonitorFromWindow(b.hwnd, MONITOR_DEFAULTTONEAREST) };
             unsafe { GetMonitorInfoW(monitor, &mut info) }.ok().ok()?;
             Some(jtb_win::flyout::Anchor {
+                window: b.hwnd,
                 edge: b.bar.edge(),
                 bar,
                 monitor: info.rcMonitor,

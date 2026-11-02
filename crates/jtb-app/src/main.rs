@@ -1261,6 +1261,9 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     if let Some(line) = jtb_win::flyout::tick() {
                         log(&line);
                     }
+                    if let Some(line) = jtb_win::langmenu::tick() {
+                        log(&line);
+                    }
                 }
                 TIMER_ZORDER => {
                     bar::keep_above_explorer();

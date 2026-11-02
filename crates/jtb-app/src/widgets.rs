@@ -18,8 +18,8 @@ const WHITE: [u8; 3] = [255, 255, 255];
 pub enum Action {
     /// The quick settings panel (Win+A).
     QuickSettings,
-    /// Switch to the next input language.
-    NextLanguage,
+    /// The list of input languages.
+    LanguageMenu,
 }
 
 pub trait Widget {
@@ -69,7 +69,7 @@ impl Widget for Language {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::NextLanguage)
+        Some(Action::LanguageMenu)
     }
 }
 
@@ -313,7 +313,11 @@ pub fn click(at: usize) {
             }
             system::open_quick_settings();
         }
-        Some(Action::NextLanguage) => crate::log(&system::next_input_language()),
+        Some(Action::LanguageMenu) => {
+            if let Some(anchor) = crate::bar::flyout_anchor() {
+                crate::log(&jtb_win::langmenu::show(&anchor));
+            }
+        }
         None => {}
     }
 }

@@ -16,6 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Where the flyout should go: next to this bar, near the clicked point.
 #[derive(Clone, Copy)]
 pub struct Anchor {
+    /// The bar window the widget is on.
+    pub window: HWND,
     pub edge: Edge,
     pub bar: RECT,
     pub monitor: RECT,
