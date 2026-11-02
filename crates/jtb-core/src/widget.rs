@@ -68,6 +68,40 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
     }
 }
 
+/// How the machine is connected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Network {
+    /// Wi-Fi: the network name and the signal quality in percent.
+    Wifi {
+        name: String,
+        quality: u8,
+    },
+    Ethernet,
+    Offline,
+}
+
+/// The network glyph: signal bars for Wi-Fi, a plug for a cable, a globe when offline.
+pub fn network_state(network: &Network) -> WidgetState {
+    let (code, tooltip) = match network {
+        Network::Wifi { name, quality } => {
+            let code = match quality {
+                0..=24 => 0xE872,
+                25..=49 => 0xE873,
+                50..=74 => 0xE874,
+                _ => 0xE701,
+            };
+            (code, format!("Wi-Fi: {name}, signal {quality}%"))
+        }
+        Network::Ethernet => (0xE839, "Network: wired".to_string()),
+        Network::Offline => (0xE774, "Network: not connected".to_string()),
+    };
+    WidgetState {
+        symbol: glyph(code),
+        label: String::new(),
+        tooltip,
+    }
+}
+
 /// The input language indicator: the three letter language code in capitals, such as `ENG`.
 pub fn language_state(iso_code: &str) -> WidgetState {
     let code: String = iso_code
@@ -109,6 +143,20 @@ mod tests {
         assert_eq!(volume_state(20, false).symbol, "\u{E993}");
         assert_eq!(volume_state(50, false).symbol, "\u{E994}");
         assert_eq!(volume_state(90, false).symbol, "\u{E995}");
+    }
+
+    #[test]
+    fn wifi_glyph_follows_the_signal() {
+        let wifi = |quality| Network::Wifi {
+            name: "home".to_string(),
+            quality,
+        };
+        assert_eq!(network_state(&wifi(10)).symbol, "\u{E872}");
+        assert_eq!(network_state(&wifi(60)).symbol, "\u{E874}");
+        assert_eq!(network_state(&wifi(100)).symbol, "\u{E701}");
+        assert_eq!(network_state(&wifi(60)).tooltip, "Wi-Fi: home, signal 60%");
+        assert_eq!(network_state(&Network::Ethernet).symbol, "\u{E839}");
+        assert_eq!(network_state(&Network::Offline).symbol, "\u{E774}");
     }
 
     #[test]

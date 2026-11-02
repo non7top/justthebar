@@ -42,7 +42,7 @@ impl Widget for Battery {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::Open("ms-settings:batterysaver"))
+        Some(Action::Open(QUICK_SETTINGS))
     }
 }
 
@@ -62,9 +62,45 @@ impl Widget for Language {
     }
 }
 
+const QUICK_SETTINGS: &str = "ms-actioncenter:controlcenter/&showFooter=true";
+
+struct Volume;
+
+impl Widget for Volume {
+    fn name(&self) -> &'static str {
+        "volume"
+    }
+
+    fn state(&mut self) -> Option<WidgetState> {
+        system::volume().map(|(percent, muted)| widget::volume_state(percent, muted))
+    }
+
+    fn click(&mut self) -> Option<Action> {
+        Some(Action::Open(QUICK_SETTINGS))
+    }
+}
+
+struct Network;
+
+impl Widget for Network {
+    fn name(&self) -> &'static str {
+        "network"
+    }
+
+    fn state(&mut self) -> Option<WidgetState> {
+        Some(widget::network_state(&system::network()))
+    }
+
+    fn click(&mut self) -> Option<Action> {
+        Some(Action::Open(QUICK_SETTINGS))
+    }
+}
+
 fn create(name: &str) -> Option<Box<dyn Widget>> {
     match name {
         "battery" => Some(Box::new(Battery)),
+        "volume" => Some(Box::new(Volume)),
+        "network" => Some(Box::new(Network)),
         "language" => Some(Box::new(Language)),
         _ => None,
     }
