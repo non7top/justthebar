@@ -110,6 +110,10 @@ impl NotifyPacket {
             && self.icon_handle != 0
     }
 
+    pub fn is_modify(&self) -> bool {
+        self.message == NIM_MODIFY
+    }
+
     /// False for packets that cannot be applied: no owner window.
     pub fn is_valid(&self) -> bool {
         self.hwnd != 0
@@ -205,6 +209,14 @@ mod tests {
         let p = parse_notify(&buf).unwrap();
         assert_eq!(p.hwnd, -16);
         assert_eq!(p.icon_handle, i32::MIN as isize + 1);
+    }
+
+    #[test]
+    fn only_a_modify_packet_is_a_modify() {
+        assert!(parse_notify(&packet(NIM_MODIFY, 5, 1, 0))
+            .unwrap()
+            .is_modify());
+        assert!(!parse_notify(&packet(NIM_ADD, 5, 1, 0)).unwrap().is_modify());
     }
 
     #[test]

@@ -4,8 +4,6 @@
 
 Current state: the window is created, the icon packets are decoded, and every packet is a line in `jtb.log`. The icons are drawn in the bar `tray.bar` (index in `bars`), just before the clock: one row on top and bottom bars, a grid on side bars. Hovering one highlights it and shows its tooltip, and clicks and hover are passed on to the app that owns the icon. Leave `enabled` false (the default) for daily use.
 
-`"hide": ["msrdc.exe"]` drops the icons of the listed executables (names, any case). An app that sends only modify messages (the WSL Remote Desktop one does) gets an icon on the bar although Explorer's own tray shows none; list it here. The list is read when an icon packet arrives, so icons already shown stay until the app is restarted.
-
 ## What to look for in `jtb.log`
 
 - `tray: role taken` when the app starts or the config is saved with the tray on.

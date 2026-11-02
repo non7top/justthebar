@@ -29,8 +29,7 @@
   },
   "tray": {
     "enabled": false,
-    "bar": 0,
-    "hide": []
+    "bar": 0
   },
   "pins": [],
   "groups": []

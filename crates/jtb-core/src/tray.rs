@@ -132,6 +132,10 @@ pub struct TrayIcons {
 }
 
 impl TrayIcons {
+    pub fn contains(&self, key: TrayKey) -> bool {
+        self.items.iter().any(|i| i.key == key)
+    }
+
     /// Returns true when something that is drawn may have changed.
     pub fn apply(&mut self, change: TrayChange) -> bool {
         match change {
@@ -290,6 +294,16 @@ mod tests {
         assert!(icons.apply(TrayChange::Delete(key(1, 1))));
         assert!(!icons.apply(TrayChange::Delete(key(1, 1))));
         assert_eq!(tooltips(&icons), vec!["two"]);
+    }
+
+    #[test]
+    fn contains_follows_adds_and_deletes() {
+        let mut icons = TrayIcons::default();
+        assert!(!icons.contains(key(1, 1)));
+        icons.apply(named(key(1, 1), "one"));
+        assert!(icons.contains(key(1, 1)));
+        icons.apply(TrayChange::Delete(key(1, 1)));
+        assert!(!icons.contains(key(1, 1)));
     }
 
     #[test]

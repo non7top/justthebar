@@ -5,7 +5,7 @@
     { "monitor": 1, "edge": "left", "size": 120 }
   ],
   "start": { "enabled": true, "image": "start-button_large.png" },
-  "tray": { "enabled": true, "bar": 0, "hide": ["msrdc.exe"] },
+  "tray": { "enabled": true, "bar": 0 },
   "pins": [
     { "name": "Notepad", "path": "C:\\Windows\\notepad.exe" }
   ],

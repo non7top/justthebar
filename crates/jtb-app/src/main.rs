@@ -228,9 +228,13 @@ fn on_tray_packet(data: &[u8]) -> bool {
         .and_then(|path| path.rsplit('\\').next().map(str::to_string))
         .unwrap_or_default();
     let valid = packet.is_valid();
-    if current_config().tray.hides(&owner) {
-        log(&format!("tray: icon of {owner} hidden by tray.hide"));
-        return valid;
+    // Explorer refuses a modify for an icon it does not have, and the app then sends an add.
+    if packet.is_modify() && !TRAY_ICONS.with_borrow(|icons| icons.contains(packet.key())) {
+        log(&format!(
+            "tray: modify of unknown icon refused owner={owner} id={}",
+            packet.id
+        ));
+        return false;
     }
     let icon = if valid && packet.wants_icon() {
         let id = next_icon_id();
