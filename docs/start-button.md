@@ -37,6 +37,11 @@ Win key keeps working. If the library cannot be loaded or lacks the functions, t
 `start: in-process menu failed: ...` and the bar uses the default route below. The function names
 it looks up belong to Open-Shell 4.4.198; another version may need a change here.
 
+The menu takes its scale from the monitor of the clicked bar (a 1-pixel anchor window is moved
+there before each open). That only works because `jtb-app.exe` carries a `supportedOS` manifest
+(`crates/jtb-app/jtb-app.manifest`, compiled by `build.rs` with `x86_64-w64-mingw32-windres`):
+without it Windows reports version 6.2 and Open-Shell skips its per-monitor DPI code.
+
 Default (`"in_process": false`). A click moves Open-Shell's own button under the bar's button,
 answers Open-Shell's "where is the taskbar" question with the clicked bar, and posts Open-Shell's
 toggle message to Explorer's taskbar (what `StartMenu.exe -toggle` does). Open-Shell asks twice
