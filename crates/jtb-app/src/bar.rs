@@ -18,12 +18,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, KillTimer, LoadCursorW,
-    RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW, MA_NOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_DROPFILES,
-    WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE, WM_TIMER,
-    WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetWindowRect, KillTimer,
+    LoadCursorW, RegisterClassW, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_ARROW,
+    MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_ACTIVATE,
+    WM_DROPFILES, WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SIZE,
+    WM_TIMER, WM_WINDOWPOSCHANGED, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::log;
@@ -416,6 +416,11 @@ fn note_start_rect(hwnd: HWND, bar: AppBar) {
     unsafe {
         let _ = ClientToScreen(hwnd, &mut origin);
     }
+    let mut window = RECT::default();
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut window);
+    }
+    crate::note_start_bar(bar.edge(), window);
     crate::note_start_rect(RECT {
         left: origin.x + rect.left as i32,
         top: origin.y + rect.top as i32,

@@ -134,6 +134,34 @@ pub fn parse_icon_query(data: &[u8]) -> Option<IconQuery> {
     })
 }
 
+/// `ABM_GETTASKBARPOS`, the message number of the AppBar call that asks where the taskbar is.
+pub const ABM_GETTASKBARPOS: u32 = 5;
+
+/// An AppBar call that arrived as a `dwData` 0 payload (`APPBARMSGDATAV3`: a 40 byte
+/// `APPBARDATAV2`, the message, a 64-bit shared memory handle and the sender's process id).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppBarCall {
+    pub message: u32,
+    /// Shared memory that holds the caller's `APPBARDATAV2`, read and written with `SHLockShared`.
+    pub shared: u64,
+    pub process: u32,
+}
+
+const APPBAR_DATA_SIZE: u32 = 40;
+const APPBAR_CALL_SIZE: usize = 64;
+
+pub fn parse_appbar_call(data: &[u8]) -> Option<AppBarCall> {
+    if data.len() != APPBAR_CALL_SIZE || u32_at(data, 0) != APPBAR_DATA_SIZE {
+        return None;
+    }
+    let shared = u64::from(u32_at(data, 48)) | (u64::from(u32_at(data, 52)) << 32);
+    Some(AppBarCall {
+        message: u32_at(data, 40),
+        shared,
+        process: u32_at(data, 56),
+    })
+}
+
 /// Two screen coordinates in one value, x in the low 16 bits and y in the high ones, the way the
 /// shell answers an icon rectangle query.
 pub fn pack_point(x: i32, y: i32) -> isize {
@@ -271,6 +299,23 @@ mod tests {
         let q = parse_icon_query(&buf).unwrap();
         assert_eq!((q.message, q.hwnd, q.id), (2, -16, 7));
         assert!(parse_icon_query(&buf[..20]).is_none());
+    }
+
+    #[test]
+    fn an_appbar_call_is_read_from_its_fixed_layout() {
+        let mut buf = vec![0u8; 64];
+        put(&mut buf, 0, 40);
+        put(&mut buf, 40, ABM_GETTASKBARPOS);
+        put(&mut buf, 48, 0x1234);
+        put(&mut buf, 52, 1);
+        put(&mut buf, 56, 99);
+        let call = parse_appbar_call(&buf).unwrap();
+        assert_eq!(call.message, ABM_GETTASKBARPOS);
+        assert_eq!(call.shared, 0x1_0000_1234);
+        assert_eq!(call.process, 99);
+        assert!(parse_appbar_call(&buf[..60]).is_none());
+        put(&mut buf, 0, 36);
+        assert!(parse_appbar_call(&buf).is_none());
     }
 
     #[test]

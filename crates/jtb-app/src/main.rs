@@ -64,6 +64,8 @@ thread_local! {
     static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
     /// Where the Start button was clicked, in screen coordinates, until the menu is toggled.
     static START_RECT: Cell<Option<RECT>> = const { Cell::new(None) };
+    /// The edge (`ABE_*`) and screen rectangle of the bar whose Start button was clicked last.
+    static START_BAR: Cell<Option<(u32, RECT)>> = const { Cell::new(None) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -207,7 +209,7 @@ fn sync_tray(enabled: bool) {
         return;
     }
     if enabled {
-        match tray::create(on_tray_packet, on_icon_query) {
+        match tray::create(on_tray_packet, on_icon_query, on_taskbar_pos) {
             Ok(()) => log("tray: role taken, Explorer's Shell_TrayWnd sent to the bottom"),
             Err(e) => log(&format!("tray: could not take the role: {e}")),
         }
@@ -582,6 +584,24 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
 /// Remembers where the Start button the user just clicked is, for `run_start`.
 pub fn note_start_rect(rect: RECT) {
     START_RECT.set(Some(rect));
+}
+
+/// Remembers which bar the Start button was clicked on: Open-Shell asks where the taskbar is and
+/// opens the menu on that side.
+pub fn note_start_bar(edge: Edge, rect: RECT) {
+    let abe = match edge {
+        Edge::Left => 0,
+        Edge::Top => 1,
+        Edge::Right => 2,
+        Edge::Bottom => 3,
+    };
+    START_BAR.set(Some((abe, rect)));
+}
+
+fn on_taskbar_pos() -> Option<(u32, RECT)> {
+    let pos = START_BAR.get()?;
+    log(&format!("start: taskbar position asked -> {pos:?}"));
+    Some(pos)
 }
 
 fn run_start(config: &StartConfig) {

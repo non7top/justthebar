@@ -2,10 +2,12 @@
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
+use jtb_core::traypacket::{parse_appbar_call, AppBarCall, ABM_GETTASKBARPOS};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Shell::{SHLockShared, SHUnlockShared};
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW,
     FindWindowW, GetSystemMetrics, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow,
@@ -24,10 +26,34 @@ const POSTED_MESSAGE: u32 = WM_USER + 372;
 
 type Handler = Box<dyn Fn(&[u8]) -> bool>;
 type QueryHandler = Box<dyn Fn(&[u8]) -> Option<isize>>;
+/// The edge (`ABE_*`) and screen rectangle to report as the taskbar position, if any.
+type PosHandler = Box<dyn Fn() -> Option<(u32, RECT)>>;
 
 thread_local! {
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
     static QUERY_HANDLER: RefCell<Option<QueryHandler>> = const { RefCell::new(None) };
+    static POS_HANDLER: RefCell<Option<PosHandler>> = const { RefCell::new(None) };
+}
+
+/// Writes the answer to an `ABM_GETTASKBARPOS` call into the caller's shared `APPBARDATAV2`
+/// (`uEdge` at byte 12, `rc` at byte 16).
+fn answer_taskbar_pos(call: AppBarCall, edge: u32, rc: RECT) -> bool {
+    unsafe {
+        let data = SHLockShared(HANDLE(call.shared as usize as *mut _), call.process);
+        if data.is_null() {
+            return false;
+        }
+        let bytes = data as *mut u8;
+        (bytes.add(12) as *mut u32).write_unaligned(edge);
+        for (i, value) in [rc.left, rc.top, rc.right, rc.bottom]
+            .into_iter()
+            .enumerate()
+        {
+            (bytes.add(16 + i * 4) as *mut i32).write_unaligned(value);
+        }
+        let _ = SHUnlockShared(data);
+    }
+    true
 }
 
 pub fn ours() -> Option<HWND> {
@@ -77,6 +103,21 @@ extern "system" fn tray_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                     };
                     if HANDLER.with_borrow(|h| h.as_ref().is_some_and(|h| h(bytes))) {
                         return LRESULT(1);
+                    }
+                }
+                if data.dwData == 0 && !data.lpData.is_null() {
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(data.lpData as *const u8, data.cbData as usize)
+                    };
+                    if let Some(call) = parse_appbar_call(bytes) {
+                        if call.message == ABM_GETTASKBARPOS {
+                            let pos = POS_HANDLER.with_borrow(|h| h.as_ref().and_then(|h| h()));
+                            if let Some((edge, rc)) = pos {
+                                if answer_taskbar_pos(call, edge, rc) {
+                                    return LRESULT(1);
+                                }
+                            }
+                        }
                     }
                 }
                 if data.dwData == 3 && !data.lpData.is_null() {
@@ -152,11 +193,12 @@ fn set_topmost(hwnd: HWND) {
 /// Takes the tray role: creates our `Shell_TrayWnd` above Explorer's, which goes to the bottom,
 /// and tells every app to send its icons again. `handler` gets the notify icon packets (the
 /// `SHELLTRAYDATA` bytes) and returns whether it took the packet. `query` gets the icon rectangle
-/// queries and returns the answer, or none to leave it to Explorer. Everything else goes to
-/// Explorer's window.
+/// queries and returns the answer, or none to leave it to Explorer. `taskbar_pos` answers the
+/// AppBar call that asks where the taskbar is. Everything else goes to Explorer's window.
 pub fn create(
     handler: impl Fn(&[u8]) -> bool + 'static,
     query: impl Fn(&[u8]) -> Option<isize> + 'static,
+    taskbar_pos: impl Fn() -> Option<(u32, RECT)> + 'static,
 ) -> Result<(), String> {
     if is_active() {
         return Ok(());
@@ -184,6 +226,7 @@ pub fn create(
     }
     HANDLER.with_borrow_mut(|h| *h = Some(Box::new(handler)));
     QUERY_HANDLER.with_borrow_mut(|h| *h = Some(Box::new(query)));
+    POS_HANDLER.with_borrow_mut(|h| *h = Some(Box::new(taskbar_pos)));
     let tray = unsafe {
         CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -281,6 +324,7 @@ pub fn give_back(force: bool) -> bool {
         }
         HANDLER.with_borrow_mut(|h| *h = None);
         QUERY_HANDLER.with_borrow_mut(|h| *h = None);
+        POS_HANDLER.with_borrow_mut(|h| *h = None);
     }
     if held == 0 && !force {
         return false;
