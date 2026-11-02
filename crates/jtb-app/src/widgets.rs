@@ -26,6 +26,10 @@ pub trait Widget {
     fn name(&self) -> &'static str;
     /// What the widget shows now; none hides it (a battery widget on a desktop).
     fn state(&mut self) -> Option<WidgetState>;
+    /// Whether the widget is cheap and changes fast enough to be read every 100 ms.
+    fn quick(&self) -> bool {
+        false
+    }
     /// A left click on the widget.
     fn click(&mut self) -> Option<Action> {
         None
@@ -59,12 +63,19 @@ impl Widget for Language {
         system::input_language().map(|code| widget::language_state(&code))
     }
 
+    fn quick(&self) -> bool {
+        true
+    }
+
     fn click(&mut self) -> Option<Action> {
         Some(Action::Open("ms-settings:regionlanguage"))
     }
 }
 
-struct Volume;
+#[derive(Default)]
+struct Volume {
+    last_error: Option<String>,
+}
 
 impl Widget for Volume {
     fn name(&self) -> &'static str {
@@ -72,7 +83,19 @@ impl Widget for Volume {
     }
 
     fn state(&mut self) -> Option<WidgetState> {
-        system::volume().map(|(percent, muted)| widget::volume_state(percent, muted))
+        match system::volume() {
+            Ok((percent, muted)) => {
+                self.last_error = None;
+                Some(widget::volume_state(percent, muted))
+            }
+            Err(error) => {
+                if self.last_error.as_ref() != Some(&error) {
+                    crate::log(&format!("widgets: volume cannot be read: {error}"));
+                    self.last_error = Some(error);
+                }
+                None
+            }
+        }
     }
 
     fn click(&mut self) -> Option<Action> {
@@ -80,7 +103,10 @@ impl Widget for Volume {
     }
 }
 
-struct Network;
+#[derive(Default)]
+struct Network {
+    was_offline: bool,
+}
 
 impl Widget for Network {
     fn name(&self) -> &'static str {
@@ -88,7 +114,17 @@ impl Widget for Network {
     }
 
     fn state(&mut self) -> Option<WidgetState> {
-        Some(widget::network_state(&system::network()))
+        let network = system::network();
+        let state = widget::network_state(&network);
+        let offline = network == widget::Network::Offline;
+        if offline && !self.was_offline {
+            crate::log(&format!(
+                "widgets: no connection found among {}",
+                system::network_report()
+            ));
+        }
+        self.was_offline = offline;
+        Some(state)
     }
 
     fn click(&mut self) -> Option<Action> {
@@ -99,8 +135,8 @@ impl Widget for Network {
 fn create(name: &str) -> Option<Box<dyn Widget>> {
     match name {
         "battery" => Some(Box::new(Battery)),
-        "volume" => Some(Box::new(Volume)),
-        "network" => Some(Box::new(Network)),
+        "volume" => Some(Box::new(Volume::default())),
+        "network" => Some(Box::new(Network::default())),
         "language" => Some(Box::new(Language)),
         _ => None,
     }
@@ -166,9 +202,21 @@ pub fn rebuild(config: &[WidgetConfig]) {
 
 /// Reads every widget again; true when something on screen changed.
 pub fn refresh() -> bool {
+    refresh_where(|_| true)
+}
+
+/// Reads only the widgets that change fast (the input language); true when something changed.
+pub fn refresh_quick() -> bool {
+    refresh_where(|widget| widget.quick())
+}
+
+fn refresh_where(wanted: impl Fn(&dyn Widget) -> bool) -> bool {
     CELLS.with_borrow_mut(|cells| {
         let mut changed = false;
         for cell in cells {
+            if !wanted(cell.widget.as_ref()) {
+                continue;
+            }
             let state = cell.widget.state();
             let same = match (&state, &cell.shown) {
                 (Some(new), Some(old)) => *new == old.state,

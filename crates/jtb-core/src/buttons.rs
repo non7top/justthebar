@@ -157,8 +157,8 @@ pub fn bar_layout(
 }
 
 /// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar;
-/// ignored on side bars, where each takes a row). They sit just before the tray cells, in order,
-/// and their rects follow the tray cells in `tray`.
+/// shrunk to fit the width on side bars, where they form one row). They sit just before the tray
+/// cells, in order, and their rects follow the tray cells in `tray`.
 #[allow(clippy::too_many_arguments)]
 pub fn bar_layout_with_widgets(
     edge: Edge,
@@ -196,18 +196,23 @@ pub fn bar_layout_with_widgets(
             reserved += total + pad;
         } else {
             let each = WIDGET_THICK * scale;
-            let total = each * count + gap * (count - 1.0);
-            let mut top = (clock.top - extent - pad - total).max(0.0);
-            for _ in widgets {
+            let room = (width - 2.0 * pad).max(0.0);
+            let wanted: f32 =
+                widgets.iter().map(|len| len * scale).sum::<f32>() + gap * (count - 1.0);
+            let shrink = if wanted > room { room / wanted } else { 1.0 };
+            let top = (clock.top - extent - pad - each).max(0.0);
+            let mut left = pad;
+            for len in widgets {
+                let right = left + len * scale * shrink;
                 cells.push(Rect {
-                    left: pad,
+                    left,
                     top,
-                    right: (width - pad).max(pad),
+                    right,
                     bottom: top + each,
                 });
-                top += each + gap;
+                left = right + gap * shrink;
             }
-            reserved += total + pad;
+            reserved += each + pad;
         }
     }
     BarLayout {
@@ -446,15 +451,25 @@ mod tests {
     }
 
     #[test]
-    fn bar_widgets_stack_above_the_tray_on_a_side_bar() {
-        let layout =
-            bar_layout_with_widgets(Edge::Right, 200.0, 1080.0, 1.0, 2, None, 3, &[50.0, 50.0]);
-        assert_eq!(layout.tray.len(), 5);
-        let (first, second) = (layout.tray[3], layout.tray[4]);
-        assert_eq!(first.bottom - first.top, 28.0);
-        assert!(first.bottom <= second.top);
-        assert!(second.bottom <= layout.tray[0].top);
-        assert!(layout.rows[1].bottom <= first.top);
+    fn bar_widgets_form_one_row_above_the_tray_on_a_side_bar() {
+        let layout = bar_layout_with_widgets(
+            Edge::Right,
+            200.0,
+            1080.0,
+            1.0,
+            2,
+            None,
+            3,
+            &[50.0, 50.0, 50.0, 50.0],
+        );
+        assert_eq!(layout.tray.len(), 7);
+        let row = &layout.tray[3..];
+        assert!(row.iter().all(|r| r.top == row[0].top));
+        assert!(row.windows(2).all(|w| w[0].right <= w[1].left));
+        assert!(row[3].right <= 200.0);
+        assert_eq!(row[0].bottom - row[0].top, 28.0);
+        assert!(row[0].bottom <= layout.tray[0].top);
+        assert!(layout.rows[1].bottom <= row[0].top);
     }
 
     #[test]

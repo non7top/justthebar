@@ -29,23 +29,30 @@ pub fn input_language() -> Option<String> {
     (len > 1).then(|| String::from_utf16_lossy(&buffer[..len as usize - 1]))
 }
 
-/// The default speakers' volume in percent and whether they are muted.
-pub fn volume() -> Option<(u8, bool)> {
+/// The default speakers' volume in percent and whether they are muted, or why it cannot be read.
+pub fn volume() -> Result<(u8, bool), String> {
     use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
     use windows::Win32::Media::Audio::{
         eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
     };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+    };
+    let step = |what: &'static str| move |e: windows::core::Error| format!("{what}: {e}");
     unsafe {
+        // Already initialized on this thread is fine; a different model is too.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(step("enumerator"))?;
         let device = enumerator
             .GetDefaultAudioEndpoint(eRender, eMultimedia)
-            .ok()?;
-        let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).ok()?;
-        let level = volume.GetMasterVolumeLevelScalar().ok()?;
-        let muted = volume.GetMute().ok()?.as_bool();
-        Some(((level * 100.0).round().clamp(0.0, 100.0) as u8, muted))
+            .map_err(step("default device"))?;
+        let volume: IAudioEndpointVolume = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(step("endpoint volume"))?;
+        let level = volume.GetMasterVolumeLevelScalar().map_err(step("level"))?;
+        let muted = volume.GetMute().map_err(step("mute"))?.as_bool();
+        Ok(((level * 100.0).round().clamp(0.0, 100.0) as u8, muted))
     }
 }
 
@@ -54,10 +61,59 @@ pub fn network() -> Network {
     if let Some((name, quality)) = wifi() {
         return Network::Wifi { name, quality };
     }
-    if wired() {
+    let adapters = adapters();
+    let online = |a: &&Adapter| a.up && a.gateway;
+    if let Some(a) = adapters.iter().filter(online).find(|a| a.kind == WIFI) {
+        return Network::Wifi {
+            name: a.name.clone(),
+            quality: 100,
+        };
+    }
+    if adapters
+        .iter()
+        .filter(online)
+        .any(|a| a.kind == ETHERNET && !a.is_virtual())
+    {
         return Network::Ethernet;
     }
     Network::Offline
+}
+
+/// One line per network adapter, for the log when the widget finds no connection.
+pub fn network_report() -> String {
+    adapters()
+        .iter()
+        .map(|a| {
+            format!(
+                "[type {} up {} gateway {} {} / {}]",
+                a.kind, a.up, a.gateway, a.name, a.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+const ETHERNET: u32 = 6;
+const WIFI: u32 = 71;
+
+struct Adapter {
+    kind: u32,
+    up: bool,
+    gateway: bool,
+    name: String,
+    description: String,
+}
+
+impl Adapter {
+    /// VPN and virtual switch adapters also have a gateway but are not the connection itself.
+    fn is_virtual(&self) -> bool {
+        let text = self.description.to_lowercase();
+        [
+            "tap", "wintun", "tun", "vpn", "virtual", "vmware", "hyper-v", "loopback",
+        ]
+        .iter()
+        .any(|word| text.contains(word))
+    }
 }
 
 fn wifi() -> Option<(String, u8)> {
@@ -116,51 +172,55 @@ fn wifi() -> Option<(String, u8)> {
     }
 }
 
-/// True when a wired adapter is up and has a gateway.
-fn wired() -> bool {
+fn adapters() -> Vec<Adapter> {
     use windows::Win32::NetworkManagement::IpHelper::{
         GetAdaptersAddresses, GAA_FLAG_INCLUDE_GATEWAYS, IP_ADAPTER_ADDRESSES_LH,
     };
     use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
     use windows::Win32::Networking::WinSock::AF_UNSPEC;
-    const ETHERNET: u32 = 6;
-    unsafe {
-        let mut size = 0u32;
-        let _ = GetAdaptersAddresses(
-            AF_UNSPEC.0 as u32,
-            GAA_FLAG_INCLUDE_GATEWAYS,
-            None,
-            None,
-            &mut size,
-        );
-        if size == 0 {
-            return false;
-        }
-        let mut buffer = vec![0u8; size as usize];
+    let mut size = 16 * 1024u32;
+    for _ in 0..4 {
+        let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
         let first = buffer.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
-        if GetAdaptersAddresses(
-            AF_UNSPEC.0 as u32,
-            GAA_FLAG_INCLUDE_GATEWAYS,
-            None,
-            Some(first),
-            &mut size,
-        ) != 0
-        {
-            return false;
+        let status = unsafe {
+            GetAdaptersAddresses(
+                AF_UNSPEC.0 as u32,
+                GAA_FLAG_INCLUDE_GATEWAYS,
+                None,
+                Some(first),
+                &mut size,
+            )
+        };
+        const BUFFER_OVERFLOW: u32 = 111;
+        if status == BUFFER_OVERFLOW {
+            continue;
         }
+        if status != 0 {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
         let mut adapter = first as *const IP_ADAPTER_ADDRESSES_LH;
         while !adapter.is_null() {
-            let a = &*adapter;
-            if a.IfType == ETHERNET
-                && a.OperStatus == IfOperStatusUp
-                && !a.FirstGatewayAddress.is_null()
-            {
-                return true;
-            }
+            let a = unsafe { &*adapter };
+            let text = |p: windows::core::PWSTR| {
+                if p.is_null() {
+                    String::new()
+                } else {
+                    unsafe { p.to_string() }.unwrap_or_default()
+                }
+            };
+            found.push(Adapter {
+                kind: a.IfType,
+                up: a.OperStatus == IfOperStatusUp,
+                gateway: !a.FirstGatewayAddress.is_null(),
+                name: text(a.FriendlyName),
+                description: text(a.Description),
+            });
             adapter = a.Next;
         }
-        false
+        return found;
     }
+    Vec::new()
 }
 
 /// Opens the Windows 11 quick settings panel the way Win+A does.

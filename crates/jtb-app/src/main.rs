@@ -37,6 +37,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const TIMER_HIDE_EXPLORER: usize = 1;
 const TIMER_QUIT: usize = 2;
 const TIMER_CLOCK: usize = 3;
+const TIMER_WIDGETS: usize = 9;
 const TIMER_CONFIG: usize = 4;
 const TIMER_ZORDER: usize = 7;
 
@@ -1220,6 +1221,7 @@ fn main() -> Result<()> {
         });
         apply(&config, args.hide_explorer);
         SetTimer(Some(control), TIMER_CLOCK, 1000, None);
+        SetTimer(Some(control), TIMER_WIDGETS, 100, None);
         SetTimer(Some(control), TIMER_CONFIG, 1000, None);
         SetTimer(Some(control), TIMER_ZORDER, 200, None);
         if let Some(secs) = args.quit_after_secs {
@@ -1256,6 +1258,11 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                             *last = now;
                         }
                     });
+                }
+                TIMER_WIDGETS => {
+                    if widgets::refresh_quick() {
+                        bar::invalidate_all();
+                    }
                 }
                 TIMER_ZORDER => {
                     bar::keep_above_explorer();
