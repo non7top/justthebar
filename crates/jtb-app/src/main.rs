@@ -648,6 +648,10 @@ fn hold_start_button(rect: RECT) {
         }
         std::thread::sleep(std::time::Duration::from_millis(2));
     }
+    log(&format!(
+        "start: Open-Shell log {:?}",
+        startmenu::menu_log_geometry()
+    ));
 }
 
 /// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.

@@ -4,8 +4,8 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindow, GetWindowRect, GetWindowThreadProcessId, PostMessageW,
-    RegisterWindowMessageW, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
+    AllowSetForegroundWindow, FindWindowExW, GetWindow, GetWindowRect, GetWindowThreadProcessId,
+    PostMessageW, RegisterWindowMessageW, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
 };
 
 fn buttons() -> Vec<HWND> {
@@ -71,6 +71,31 @@ pub fn post_toggle() -> bool {
     let Some(tray) = crate::tray::explorer_tray() else {
         return false;
     };
+    let mut process = 0;
+    unsafe { GetWindowThreadProcessId(tray, Some(&mut process)) };
+    if process != 0 {
+        let _ = unsafe { AllowSetForegroundWindow(process) };
+    }
     let message = unsafe { RegisterWindowMessageW(w!("OpenShellMenu.StartMenuMsg")) };
     message != 0 && unsafe { PostMessageW(Some(tray), message, WPARAM(0), LPARAM(0)) }.is_ok()
+}
+
+/// The geometry lines Open-Shell wrote to its menu log for the last open (the log is switched on
+/// by `scripts/5-openshell-log-on.cmd`).
+pub fn menu_log_geometry() -> Vec<String> {
+    let Ok(local) = std::env::var("LOCALAPPDATA") else {
+        return Vec::new();
+    };
+    let Ok(bytes) = std::fs::read(format!("{local}\\OpenShell\\StartMenuLog.txt")) else {
+        return Vec::new();
+    };
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    String::from_utf16_lossy(&units)
+        .lines()
+        .filter(|line| line.contains("Rect:") || line.contains("Open Menu"))
+        .map(|line| line.trim().to_string())
+        .collect()
 }
