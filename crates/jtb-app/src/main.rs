@@ -637,18 +637,16 @@ fn run_start(config: &StartConfig) {
 /// at about the same time, so the button is moved again until the menu has opened.
 fn hold_start_button(rect: RECT) {
     let started = std::time::Instant::now();
-    let mut logged = 0;
     while started.elapsed() < std::time::Duration::from_millis(700) {
-        startmenu::move_button(rect);
-        let ms = started.elapsed().as_millis();
-        if ms / 100 >= logged {
-            logged += 1;
+        let at = startmenu::button_rect();
+        if at != Some(rect) {
             log(&format!(
-                "start: +{ms} ms Open-Shell button at {:?}",
-                startmenu::button_rect()
+                "start: +{} ms Open-Shell button was moved to {at:?}",
+                started.elapsed().as_millis()
             ));
+            startmenu::move_button(rect);
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
 }
 
