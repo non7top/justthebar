@@ -162,3 +162,28 @@ fn wired() -> bool {
         false
     }
 }
+
+/// Opens the Windows 11 quick settings panel the way Win+A does.
+pub fn open_quick_settings() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY, VK_A, VK_LWIN,
+    };
+    let key = |code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: code,
+                dwFlags: flags,
+                ..Default::default()
+            },
+        },
+    };
+    let inputs = [
+        key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+        key(VK_A, KEYBD_EVENT_FLAGS(0)),
+        key(VK_A, KEYEVENTF_KEYUP),
+        key(VK_LWIN, KEYEVENTF_KEYUP),
+    ];
+    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+}

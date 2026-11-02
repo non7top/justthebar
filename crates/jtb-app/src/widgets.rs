@@ -17,6 +17,8 @@ const BITMAP_SIZE: u32 = 32;
 pub enum Action {
     /// Open a URI such as `ms-settings:sound`.
     Open(&'static str),
+    /// The quick settings panel (Win+A).
+    QuickSettings,
 }
 
 pub trait Widget {
@@ -42,7 +44,7 @@ impl Widget for Battery {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::Open(QUICK_SETTINGS))
+        Some(Action::QuickSettings)
     }
 }
 
@@ -62,8 +64,6 @@ impl Widget for Language {
     }
 }
 
-const QUICK_SETTINGS: &str = "ms-actioncenter:controlcenter/&showFooter=true";
-
 struct Volume;
 
 impl Widget for Volume {
@@ -76,7 +76,7 @@ impl Widget for Volume {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::Open(QUICK_SETTINGS))
+        Some(Action::QuickSettings)
     }
 }
 
@@ -92,7 +92,7 @@ impl Widget for Network {
     }
 
     fn click(&mut self) -> Option<Action> {
-        Some(Action::Open(QUICK_SETTINGS))
+        Some(Action::QuickSettings)
     }
 }
 
@@ -252,7 +252,9 @@ pub fn click(at: usize) {
     // Opening a URI can pump messages, which re-enter `refresh`, so the borrow must be over.
     let action =
         CELLS.with_borrow_mut(|cells| nth_shown(cells, at).and_then(|cell| cell.widget.click()));
-    if let Some(Action::Open(uri)) = action {
-        crate::open_uri(uri);
+    match action {
+        Some(Action::Open(uri)) => crate::open_uri(uri),
+        Some(Action::QuickSettings) => system::open_quick_settings(),
+        None => {}
     }
 }
