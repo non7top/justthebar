@@ -76,7 +76,7 @@ fn exe_sibling(name: &str) -> Option<PathBuf> {
     std::env::current_exe().ok().map(|p| p.with_file_name(name))
 }
 
-/// Appends a line, prefixed with milliseconds since start, to `jtb.log` next to the exe;
+/// Appends a line, prefixed with milliseconds since start and the process id, to `jtb.log` next to the exe;
 /// failures are ignored.
 fn log(line: &str) {
     use std::io::Write;
@@ -93,7 +93,7 @@ fn log(line: &str) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(file, "{ms:>7} {line}");
+        let _ = writeln!(file, "{ms:>7} [{}] {line}", std::process::id());
     }
 }
 
