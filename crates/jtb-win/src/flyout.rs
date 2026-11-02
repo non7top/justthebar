@@ -30,11 +30,22 @@ struct Pending {
     anchor: Anchor,
     since: Instant,
     seen: bool,
+    repositioned: u32,
 }
 
 thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
     static LOGGED: Cell<bool> = const { Cell::new(false) };
+    static LAST_OPEN: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// True when the flyout closed a moment ago: a click on the bar takes focus and dismisses it, so a
+/// Win+A sent for that same click would open it again instead of closing it.
+pub fn just_dismissed() -> bool {
+    visible_flyout().is_none()
+        && LAST_OPEN
+            .get()
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(600))
 }
 
 /// A flyout is about to open next to `anchor`.
@@ -43,6 +54,7 @@ pub fn expect(anchor: Anchor) {
         anchor,
         since: Instant::now(),
         seen: false,
+        repositioned: 0,
     }));
 }
 
@@ -92,14 +104,25 @@ fn target(anchor: &Anchor, width: i32, height: i32, margin: i32) -> (i32, i32) {
 /// Call often (every 100 ms); keeps the flyout at its place while it is open. Returns a line for
 /// the log the first time it finds and moves the flyout.
 pub fn tick() -> Option<String> {
-    let (anchor, since, seen) =
-        PENDING.with_borrow(|p| p.as_ref().map(|p| (p.anchor, p.since, p.seen)))?;
-    let Some(window) = visible_flyout() else {
+    let visible = visible_flyout();
+    if visible.is_some() {
+        LAST_OPEN.set(Some(Instant::now()));
+    }
+    let (anchor, since, seen, repositioned) = PENDING.with_borrow(|p| {
+        p.as_ref()
+            .map(|p| (p.anchor, p.since, p.seen, p.repositioned))
+    })?;
+    let Some(window) = visible else {
         let waited = since.elapsed();
         if (seen && waited > Duration::from_millis(500)) || waited > Duration::from_secs(3) {
             PENDING.set(None);
             if !seen && !LOGGED.replace(true) {
                 return Some("flyout: no visible ControlCenterWindow after Win+A".to_string());
+            }
+            if repositioned > 0 {
+                return Some(format!(
+                    "flyout: pushed back {repositioned} times while it was open"
+                ));
             }
         }
         return None;
@@ -118,6 +141,9 @@ pub fn tick() -> Option<String> {
         })
     });
     if (rect.left, rect.top) != (x, y) {
+        if !first {
+            PENDING.with_borrow_mut(|p| p.iter_mut().for_each(|p| p.repositioned += 1));
+        }
         let moved = unsafe {
             SetWindowPos(
                 window,
