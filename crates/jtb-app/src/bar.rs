@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use jtb_core::buttons::{bar_layout, hit_test, BarLayout};
+use jtb_core::buttons::{bar_layout, hit_test, tray_icon_rect, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{build_scene, start_art_size, ButtonView, Color, Drag, StartView};
@@ -383,6 +383,28 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
         start_art_size(&views),
         tray,
     )
+}
+
+/// The screen rectangle of the icon drawn in cell `at` of the notification area on the bar with
+/// config index `index`.
+pub fn tray_icon_screen_rect(index: usize, at: usize) -> Option<RECT> {
+    let (hwnd, bar) = BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| b.index == index)
+            .map(|b| (b.hwnd, b.bar))
+    })?;
+    let cell = layout_of(hwnd, bar).tray.get(at).copied()?;
+    let icon = tray_icon_rect(cell, unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0);
+    let mut origin = POINT { x: 0, y: 0 };
+    unsafe {
+        let _ = ClientToScreen(hwnd, &mut origin);
+    }
+    Some(RECT {
+        left: origin.x + icon.left as i32,
+        top: origin.y + icon.top as i32,
+        right: origin.x + icon.right as i32,
+        bottom: origin.y + icon.bottom as i32,
+    })
 }
 
 /// Tells the app where the Start button is on screen, so the menu can be opened next to it.

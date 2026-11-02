@@ -23,9 +23,11 @@ static OURS: AtomicIsize = AtomicIsize::new(0);
 const POSTED_MESSAGE: u32 = WM_USER + 372;
 
 type Handler = Box<dyn Fn(&[u8]) -> bool>;
+type QueryHandler = Box<dyn Fn(&[u8]) -> Option<isize>>;
 
 thread_local! {
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+    static QUERY_HANDLER: RefCell<Option<QueryHandler>> = const { RefCell::new(None) };
 }
 
 pub fn ours() -> Option<HWND> {
@@ -75,6 +77,16 @@ extern "system" fn tray_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARA
                     };
                     if HANDLER.with_borrow(|h| h.as_ref().is_some_and(|h| h(bytes))) {
                         return LRESULT(1);
+                    }
+                }
+                if data.dwData == 3 && !data.lpData.is_null() {
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(data.lpData as *const u8, data.cbData as usize)
+                    };
+                    if let Some(answer) =
+                        QUERY_HANDLER.with_borrow(|h| h.as_ref().and_then(|h| h(bytes)))
+                    {
+                        return LRESULT(answer);
                     }
                 }
             }
@@ -139,9 +151,13 @@ fn set_topmost(hwnd: HWND) {
 
 /// Takes the tray role: creates our `Shell_TrayWnd` above Explorer's, which goes to the bottom,
 /// and tells every app to send its icons again. `handler` gets the notify icon packets (the
-/// `SHELLTRAYDATA` bytes) and returns whether it took the packet. Everything else goes to
+/// `SHELLTRAYDATA` bytes) and returns whether it took the packet. `query` gets the icon rectangle
+/// queries and returns the answer, or none to leave it to Explorer. Everything else goes to
 /// Explorer's window.
-pub fn create(handler: impl Fn(&[u8]) -> bool + 'static) -> Result<(), String> {
+pub fn create(
+    handler: impl Fn(&[u8]) -> bool + 'static,
+    query: impl Fn(&[u8]) -> Option<isize> + 'static,
+) -> Result<(), String> {
     if is_active() {
         return Ok(());
     }
@@ -167,6 +183,7 @@ pub fn create(handler: impl Fn(&[u8]) -> bool + 'static) -> Result<(), String> {
         RegisterClassW(&notify_class);
     }
     HANDLER.with_borrow_mut(|h| *h = Some(Box::new(handler)));
+    QUERY_HANDLER.with_borrow_mut(|h| *h = Some(Box::new(query)));
     let tray = unsafe {
         CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -263,6 +280,7 @@ pub fn give_back(force: bool) -> bool {
             }
         }
         HANDLER.with_borrow_mut(|h| *h = None);
+        QUERY_HANDLER.with_borrow_mut(|h| *h = None);
     }
     if held == 0 && !force {
         return false;

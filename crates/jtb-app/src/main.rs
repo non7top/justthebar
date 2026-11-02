@@ -16,7 +16,7 @@ use jtb_core::scene::{ButtonView, Drag, StartView, TrayView};
 use jtb_core::startart;
 use jtb_core::state::State as UiState;
 use jtb_core::tasks::{Task, Tasks};
-use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons};
+use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons, TrayKey};
 use jtb_core::traypacket;
 use jtb_core::Edge;
 use jtb_win::{explorer, monitors, shell, startmenu, tasks, tray};
@@ -207,7 +207,7 @@ fn sync_tray(enabled: bool) {
         return;
     }
     if enabled {
-        match tray::create(on_tray_packet) {
+        match tray::create(on_tray_packet, on_icon_query) {
             Ok(()) => log("tray: role taken, Explorer's Shell_TrayWnd sent to the bottom"),
             Err(e) => log(&format!("tray: could not take the role: {e}")),
         }
@@ -259,6 +259,32 @@ fn on_tray_packet(data: &[u8]) -> bool {
         bar::invalidate_all();
     }
     valid
+}
+
+/// Answers where an icon is on screen; none when it is not one of the bar's, so Explorer answers.
+fn on_icon_query(data: &[u8]) -> Option<isize> {
+    let query = traypacket::parse_icon_query(data)?;
+    let key = TrayKey {
+        owner: query.hwnd,
+        id: query.id,
+    };
+    let at = TRAY_ICONS.with_borrow(|icons| {
+        icons
+            .visible()
+            .filter(|i| i.icon.is_some())
+            .position(|i| i.key == key)
+    })?;
+    let rect = bar::tray_icon_screen_rect(current_config().tray.bar, at)?;
+    let (x, y) = match query.message {
+        1 => (rect.left, rect.top),
+        2 => (rect.right, rect.bottom),
+        _ => return None,
+    };
+    log(&format!(
+        "tray: icon rect asked message={} hwnd={:#x} id={} -> ({x}, {y})",
+        query.message, query.hwnd, query.id
+    ));
+    Some(traypacket::pack_point(x, y))
 }
 
 fn next_icon_id() -> u64 {

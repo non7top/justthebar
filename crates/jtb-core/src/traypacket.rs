@@ -95,6 +95,34 @@ pub fn parse_notify(data: &[u8]) -> Option<NotifyPacket> {
     })
 }
 
+/// A `Shell_NotifyIconGetRect` call: where the icon of `hwnd` and `id` sits on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IconQuery {
+    /// 1 asks for the top left corner, 2 for the bottom right one.
+    pub message: u32,
+    pub hwnd: isize,
+    pub id: u32,
+}
+
+/// Reads the `dwData` 3 payload (`WINNOTIFYICONIDENTIFIER`: magic, message, size, padding, hwnd,
+/// id, guid). Returns `None` when it is too short to hold the window and the id.
+pub fn parse_icon_query(data: &[u8]) -> Option<IconQuery> {
+    if data.len() < 24 {
+        return None;
+    }
+    Some(IconQuery {
+        message: u32_at(data, 4),
+        hwnd: handle_at(data, 16),
+        id: u32_at(data, 20),
+    })
+}
+
+/// Two screen coordinates in one value, x in the low 16 bits and y in the high ones, the way the
+/// shell answers an icon rectangle query.
+pub fn pack_point(x: i32, y: i32) -> isize {
+    ((y as u16 as isize) << 16) | (x as u16 as isize)
+}
+
 impl NotifyPacket {
     pub fn key(&self) -> TrayKey {
         TrayKey {
@@ -209,6 +237,23 @@ mod tests {
         let p = parse_notify(&buf).unwrap();
         assert_eq!(p.hwnd, -16);
         assert_eq!(p.icon_handle, i32::MIN as isize + 1);
+    }
+
+    #[test]
+    fn an_icon_query_carries_the_message_window_and_id() {
+        let mut buf = vec![0u8; 36];
+        put(&mut buf, 4, 2);
+        put(&mut buf, 16, 0xFFFF_FFF0);
+        put(&mut buf, 20, 7);
+        let q = parse_icon_query(&buf).unwrap();
+        assert_eq!((q.message, q.hwnd, q.id), (2, -16, 7));
+        assert!(parse_icon_query(&buf[..20]).is_none());
+    }
+
+    #[test]
+    fn points_pack_into_one_value_and_negative_x_stays_16_bit() {
+        assert_eq!(pack_point(10, 20), (20 << 16) | 10);
+        assert_eq!(pack_point(-1, 0), 0xFFFF);
     }
 
     #[test]
