@@ -11,13 +11,21 @@ const SYMBOL_FONT: &str = "Segoe MDL2 Assets";
 const TEXT_FONT: &str = "Segoe UI Semibold";
 const BITMAP_SIZE: u32 = 32;
 
+/// What a click asks the app to do, once the widget list is no longer borrowed.
+pub enum Action {
+    /// Open a URI such as `ms-settings:sound`.
+    Open(&'static str),
+}
+
 pub trait Widget {
     /// The name used in `jtb.json`.
     fn name(&self) -> &'static str;
     /// What the widget shows now; none hides it (a battery widget on a desktop).
     fn state(&mut self) -> Option<WidgetState>;
     /// A left click on the widget.
-    fn click(&mut self) {}
+    fn click(&mut self) -> Option<Action> {
+        None
+    }
 }
 
 struct Battery;
@@ -31,8 +39,8 @@ impl Widget for Battery {
         system::battery().map(|(percent, charging)| widget::battery_state(percent, charging))
     }
 
-    fn click(&mut self) {
-        crate::open_uri("ms-settings:batterysaver");
+    fn click(&mut self) -> Option<Action> {
+        Some(Action::Open("ms-settings:batterysaver"))
     }
 }
 
@@ -47,8 +55,8 @@ impl Widget for Language {
         system::input_language().map(|code| widget::language_state(&code))
     }
 
-    fn click(&mut self) {
-        crate::open_uri("ms-settings:regionlanguage");
+    fn click(&mut self) -> Option<Action> {
+        Some(Action::Open("ms-settings:regionlanguage"))
     }
 }
 
@@ -158,5 +166,8 @@ pub fn tooltip(at: usize) -> Option<String> {
 
 /// A left click on the `at`th shown widget.
 pub fn click(at: usize) {
-    with_shown(at, |cell| cell.widget.click());
+    // Opening a URI can pump messages, which re-enter `refresh`, so the borrow must be over.
+    if let Some(Some(Action::Open(uri))) = with_shown(at, |cell| cell.widget.click()) {
+        crate::open_uri(uri);
+    }
 }
