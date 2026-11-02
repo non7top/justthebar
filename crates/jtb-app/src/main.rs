@@ -617,6 +617,10 @@ fn run_start(config: &StartConfig) {
             "start: Open-Shell button asked to move to {rect:?}, now at {moved:?}"
         ));
     }
+    log(&format!(
+        "start: Explorer taskbar {:?}",
+        startmenu::explorer_tray_info()
+    ));
     launch_app(&config.command, &config.args);
     std::thread::spawn(|| {
         let started = std::time::Instant::now();

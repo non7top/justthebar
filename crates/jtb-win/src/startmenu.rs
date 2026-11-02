@@ -4,7 +4,8 @@
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindow, GetWindowRect, SetWindowPos, GW_OWNER, SWP_NOACTIVATE, SWP_NOZORDER,
+    FindWindowExW, GetWindow, GetWindowRect, GetWindowThreadProcessId, SetWindowPos, GW_OWNER,
+    SWP_NOACTIVATE, SWP_NOZORDER,
 };
 
 fn buttons() -> Vec<HWND> {
@@ -22,6 +23,14 @@ fn buttons() -> Vec<HWND> {
         }
     }
     found
+}
+
+/// The process id and screen rectangle of Explorer's own `Shell_TrayWnd`.
+pub fn explorer_tray_info() -> Option<(u32, RECT)> {
+    let tray = crate::tray::explorer_tray()?;
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(tray, Some(&mut pid)) };
+    Some((pid, rect_of(tray)?))
 }
 
 fn rect_of(button: HWND) -> Option<RECT> {
