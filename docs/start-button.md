@@ -15,24 +15,33 @@ In `jtb.json`:
   "args": ["-toggle"],
   "label": "Start",
   "image": "start-button.png",
-  "size": 54
+  "size": 54,
+  "in_process": false
 }
 ```
 
 Every key but `enabled` is optional and the values above are the defaults.
 
-Menu position: Open-Shell opens its menu next to its own button, a popup window owned by
-Explorer's hidden taskbar. On a click the bar moves that button under its Start button, remembers
-which bar was clicked and answers Open-Shell's "where is the taskbar" question with that bar's
-edge and rectangle, then runs the command. The log lines `start: Open-Shell button asked to move
-to ..., now at ...` and `start: taskbar position asked -> ...` show both.
+## Menu position
 
-Open-Shell still limits a side taskbar to the height of Explorer's own taskbar window, which is a
-thin strip at the bottom while hidden, and Explorer puts that window back whenever it is resized.
-The menu is then squeezed to that strip. Turn on "Align start menu to working area" in the Open-Shell
-settings (tick "Show all settings"; its help text says "Use with custom taskbars"): the menu then
-uses the screen's work area, which already excludes the bars, and opens at the height of the
-button on the side of the bar that faces into the screen.
+Open-Shell works out where to put its menu from Explorer's own (hidden) taskbar, so on a custom bar
+the menu lands at the bottom-left or off screen. Two ways around that:
+
+`"in_process": true` (recommended). The bar loads Open-Shell's `StartMenuDLL.dll` (next to the
+`command`) into its own process, the way `StartMenu.exe -nohook` does, and opens the menu there. It
+tells the menu the clicked bar's edge, the bar's and the button's rectangles and the monitor's
+work area, through the placement message Open-Shell documents in `MenuContainer.h`. The menu then
+opens next to the button on any edge, its submenus get the full work area, and a click elsewhere
+closes it because the bar holds the foreground. Explorer's copy of Open-Shell is untouched, so the
+Win key keeps working. If the library cannot be loaded or lacks the functions, the log says
+`start: in-process menu failed: ...` and the bar uses the default route below. The function names
+it looks up belong to Open-Shell 4.4.198; another version may need a change here.
+
+Default (`"in_process": false`). A click moves Open-Shell's own button under the bar's button,
+answers Open-Shell's "where is the taskbar" question with the clicked bar, and posts Open-Shell's
+toggle message to Explorer's taskbar (what `StartMenu.exe -toggle` does). Open-Shell asks twice
+and the second question sometimes goes to Explorer's taskbar, so the menu opens in the right place
+only some of the time, and its submenus are limited to a thin strip.
 
 ## Look
 
