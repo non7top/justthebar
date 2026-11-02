@@ -133,6 +133,7 @@ struct ExplorerGuard;
 
 impl Drop for ExplorerGuard {
     fn drop(&mut self) {
+        menuhost::close();
         if EXPLORER_HIDDEN.get() {
             let state = explorer::restore();
             log(&format!("explorer restored, state={state}"));
