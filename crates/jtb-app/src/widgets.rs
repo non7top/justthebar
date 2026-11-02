@@ -313,7 +313,7 @@ pub fn click(at: usize) {
             }
             system::open_quick_settings();
         }
-        Some(Action::NextLanguage) => system::next_input_language(),
+        Some(Action::NextLanguage) => crate::log(&system::next_input_language()),
         None => {}
     }
 }

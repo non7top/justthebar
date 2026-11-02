@@ -249,28 +249,52 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Switches the foreground window to the next installed input layout.
-pub fn next_input_language() {
+/// Asks the foreground window (and the control with the keyboard focus) to switch to the next
+/// installed input layout. Returns what it did, for the log.
+pub fn next_input_language() -> String {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardLayoutList, HKL};
-    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_INPUTLANGCHANGEREQUEST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetGUIThreadInfo, PostMessageW, GUITHREADINFO, WM_INPUTLANGCHANGEREQUEST,
+    };
     let window = unsafe { GetForegroundWindow() };
     let thread = unsafe { GetWindowThreadProcessId(window, None) };
     let current = unsafe { GetKeyboardLayout(thread) };
     let count = unsafe { GetKeyboardLayoutList(None) };
     if count < 2 {
-        return;
+        return format!("language: {count} layouts installed, nothing to switch");
     }
     let mut layouts = vec![HKL::default(); count as usize];
     let count = unsafe { GetKeyboardLayoutList(Some(&mut layouts)) } as usize;
     layouts.truncate(count);
     let at = layouts.iter().position(|l| *l == current).unwrap_or(0);
     let next = layouts[(at + 1) % layouts.len()];
-    let _ = unsafe {
-        PostMessageW(
-            Some(window),
-            WM_INPUTLANGCHANGEREQUEST,
-            WPARAM(0),
-            LPARAM(next.0 as isize),
-        )
+    let mut class = [0u16; 64];
+    let len = unsafe { GetClassNameW(window, &mut class) } as usize;
+    let mut info = GUITHREADINFO {
+        cbSize: size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
     };
+    let _ = unsafe { GetGUIThreadInfo(thread, &mut info) };
+    let mut results = Vec::new();
+    for target in [window, info.hwndFocus] {
+        if !target.0.is_null() {
+            results.push(
+                unsafe {
+                    PostMessageW(
+                        Some(target),
+                        WM_INPUTLANGCHANGEREQUEST,
+                        WPARAM(0),
+                        LPARAM(next.0 as isize),
+                    )
+                }
+                .is_ok(),
+            );
+        }
+    }
+    format!(
+        "language: foreground class {} layout {:#x} -> {:#x} of {count}, posted {results:?}",
+        String::from_utf16_lossy(&class[..len]),
+        current.0 as usize,
+        next.0 as usize
+    )
 }
