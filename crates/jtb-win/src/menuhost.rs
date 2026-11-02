@@ -10,7 +10,7 @@ use windows::Win32::System::ApplicationInstallationAndServicing::{
     ActivateActCtx, CreateActCtxW, DeactivateActCtx, ACTCTXW,
 };
 use windows::Win32::System::LibraryLoader::{
-    GetProcAddress, LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH,
+    GetProcAddress, LoadLibraryExW, LoadLibraryW, LOAD_WITH_ALTERED_SEARCH_PATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, GetClassNameW, SendMessageW, SetWindowPos, SetWindowsHookExW,
@@ -85,6 +85,8 @@ thread_local! {
 }
 
 fn load(dll: &str) -> Result<Host, String> {
+    // Open-Shell reads the monitor's DPI only when Shcore.dll is already loaded, as it is in Explorer.
+    let _ = unsafe { LoadLibraryW(w!("Shcore.dll")) };
     let wide: Vec<u16> = dll.encode_utf16().chain(Some(0)).collect();
     let module: HMODULE =
         unsafe { LoadLibraryExW(PCWSTR(wide.as_ptr()), None, LOAD_WITH_ALTERED_SEARCH_PATH) }
