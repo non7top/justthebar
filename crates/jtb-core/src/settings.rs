@@ -431,6 +431,19 @@ mod tests {
     }
 
     #[test]
+    fn saving_keeps_key_order_and_groups() {
+        let text = r#"{"version":1,"zeta":1,"groups":[{"name":"g","exes":["a.exe"]}],"alpha":2}"#;
+        let mut root: Value = serde_json::from_str(text).unwrap();
+        let target = row(&root, "tray.enabled");
+        set(&mut root, &target, "false").unwrap();
+        let saved = serde_json::to_string(&root).unwrap();
+        assert!(saved.starts_with(
+            r#"{"version":1,"zeta":1,"groups":[{"name":"g","exes":["a.exe"]}],"alpha":2"#
+        ));
+        assert!(saved.ends_with(r#""tray":{"enabled":false}}"#));
+    }
+
+    #[test]
     fn rejects_values_of_the_wrong_type() {
         let root = json!({});
         let size = row(&root, "bars.0.size");
