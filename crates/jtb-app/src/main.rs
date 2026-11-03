@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod bar;
+mod settings;
 mod widgets;
 
 use std::cell::{Cell, RefCell};
@@ -1131,6 +1132,23 @@ fn on_shell_hook(code: usize, id: isize) {
     }
     refresh_icons();
     bar::invalidate_all();
+}
+
+/// The config file being watched, if the layout did not come from the command line.
+fn config_file() -> Option<PathBuf> {
+    STATE.with_borrow(|s| s.as_ref().and_then(|s| s.config_path.clone()))
+}
+
+/// Right click on empty bar space.
+pub fn bar_menu(hwnd: HWND) {
+    match shell::popup_menu(hwnd, &[("Advanced options...", true), ("Quit", true)]) {
+        Some(0) => match config_file() {
+            Some(path) => settings::open(path),
+            None => log("settings: the layout came from the command line, there is no config file"),
+        },
+        Some(1) => quit(),
+        _ => {}
+    }
 }
 
 /// Removes all appbars and ends the message loop.

@@ -706,7 +706,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         Hit::Button(index) => {
                             crate::context_menu(task_monitor_of(hwnd), index, hwnd);
                         }
-                        Hit::Nothing => {}
+                        Hit::Nothing => crate::bar_menu(hwnd),
                     }
                 }
                 LRESULT(0)
