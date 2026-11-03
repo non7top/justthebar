@@ -4,6 +4,7 @@ pub mod grouping;
 pub mod icon;
 pub mod layout;
 pub mod scene;
+pub mod settings;
 pub mod startart;
 pub mod state;
 pub mod tasks;
