@@ -3,7 +3,8 @@
 //! The app installs `jtb_hook_proc` as a one-shot WH_CALLWNDPROC hook on the flyout's thread and
 //! sends the attach command (1); the hook subclasses the window and the app removes the hook again.
 //! From then on the app talks to the subclass directly with the same registered message: 2 sets
-//! the position (x in the low 32 bits of lparam, y in the high 32), 3 clears it, and any command
+//! the position (x in the low 32 bits of lparam, y in the high 32, `i32::MIN` to keep the y the
+//! window asks for), 3 clears it, and any command
 //! is answered with 1, so the app can tell the subclass is there.
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 
@@ -22,6 +23,8 @@ const ATTACH: usize = 1;
 const SET: usize = 2;
 const CLEAR: usize = 3;
 const SUBCLASS_ID: usize = 0x4A54_4231;
+/// Sent as y when only x is wanted.
+const KEEP: i32 = i32::MIN;
 
 static MESSAGE: AtomicU32 = AtomicU32::new(0);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -64,17 +67,23 @@ unsafe extern "system" fn subclass(
         }
         return LRESULT(1);
     }
+    if msg == WM_NCDESTROY {
+        let _ = unsafe { RemoveWindowSubclass(window, Some(subclass), SUBCLASS_ID) };
+    }
+    let result = unsafe { DefSubclassProc(window, msg, wparam, lparam) };
+    // The window's own procedure applies its size and position rules first; only then is the
+    // requested position replaced.
     if msg == WM_WINDOWPOSCHANGING && ACTIVE.load(Ordering::Acquire) && lparam.0 != 0 {
         let pos = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
         if pos.flags.0 & SWP_NOMOVE.0 == 0 {
             pos.x = X.load(Ordering::Relaxed);
-            pos.y = Y.load(Ordering::Relaxed);
+            let y = Y.load(Ordering::Relaxed);
+            if y != KEEP {
+                pos.y = y;
+            }
         }
     }
-    if msg == WM_NCDESTROY {
-        let _ = unsafe { RemoveWindowSubclass(window, Some(subclass), SUBCLASS_ID) };
-    }
-    unsafe { DefSubclassProc(window, msg, wparam, lparam) }
+    result
 }
 
 fn attach(window: HWND) {

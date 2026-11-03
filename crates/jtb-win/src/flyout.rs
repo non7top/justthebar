@@ -40,6 +40,7 @@ thread_local! {
     static LOGGED: Cell<bool> = const { Cell::new(false) };
     static LAST_OPEN: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLOSING: Cell<Option<Instant>> = const { Cell::new(None) };
+    static HOOKED: Cell<bool> = const { Cell::new(false) };
     static LINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static HOOK_STATE: RefCell<String> = const { RefCell::new(String::new()) };
 }
@@ -64,13 +65,16 @@ fn all_flyouts() -> Vec<HWND> {
 /// Tells the code inside `ShellHost.exe` where the flyout goes, so it is placed before it is
 /// shown. Logs the first outcome and each change of it.
 fn aim_hook(anchor: &Anchor) {
+    HOOKED.set(false);
     for window in all_flyouts() {
         let state = match hookdll::attach(window) {
             Ok(true) => {
                 let mut rect = RECT::default();
                 if unsafe { GetWindowRect(window, &mut rect) }.is_ok() {
-                    let (x, y) = target_for(anchor, window, &rect);
-                    hookdll::set_position(window, x, y);
+                    let (x, y) = target_for(anchor, &rect);
+                    let side = matches!(anchor.edge, Edge::Left | Edge::Right);
+                    hookdll::set_position(window, x, (!side).then_some(y));
+                    HOOKED.set(true);
                 }
                 "placing the flyout from inside ShellHost".to_string()
             }
@@ -160,9 +164,9 @@ fn visible_flyout() -> Option<HWND> {
     None
 }
 
-fn target_for(anchor: &Anchor, window: HWND, rect: &RECT) -> (i32, i32) {
+fn target_for(anchor: &Anchor, rect: &RECT) -> (i32, i32) {
     let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-    let margin = 12 * unsafe { GetDpiForWindow(window) } as i32 / 96;
+    let margin = 12 * unsafe { GetDpiForWindow(anchor.window) } as i32 / 96;
     target(anchor, width, height, margin)
 }
 
@@ -222,7 +226,7 @@ pub fn tick() -> Option<String> {
     };
     let mut rect = RECT::default();
     unsafe { GetWindowRect(window, &mut rect) }.ok()?;
-    let (x, y) = target_for(&anchor, window, &rect);
+    let (x, y) = target_for(&anchor, &rect);
     let first = PENDING.with_borrow_mut(|p| {
         p.as_mut().is_some_and(|p| {
             let first = !p.seen;
@@ -231,6 +235,12 @@ pub fn tick() -> Option<String> {
             first
         })
     });
+    if HOOKED.get() {
+        // Moving it after it is shown makes its buttons ignore clicks for a while.
+        return first.then(|| {
+            format!("flyout: shown at {rect:?} with the hook aiming at x {x}, not moving it")
+        });
+    }
     if (rect.left, rect.top) != (x, y) {
         if !first {
             PENDING.with_borrow_mut(|p| p.iter_mut().for_each(|p| p.repositioned += 1));

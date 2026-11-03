@@ -69,8 +69,9 @@ pub fn attach(window: HWND) -> Result<bool, String> {
     Ok(send(window, PING, 0) == 1)
 }
 
-/// The next time the flyout is positioned, it goes to (`x`, `y`).
-pub fn set_position(window: HWND, x: i32, y: i32) {
+/// The next time the flyout is positioned, it goes to `x` and, when given, `y`.
+pub fn set_position(window: HWND, x: i32, y: Option<i32>) {
+    let y = y.unwrap_or(i32::MIN);
     send(
         window,
         SET,
