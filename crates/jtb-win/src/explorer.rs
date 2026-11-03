@@ -9,9 +9,9 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, ABS_ALWAYSONTOP, ABS_AUTOHIDE, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, GetWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
-    SetWindowPos, SystemParametersInfoW, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST,
-    SPI_GETWORKAREA, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    FindWindowExW, GetWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowPos,
+    SystemParametersInfoW, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST, SPI_GETWORKAREA,
+    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
     SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_TOPMOST,
 };
 
@@ -19,7 +19,7 @@ const UNSET: u32 = u32::MAX;
 static STARTUP_STATE: AtomicU32 = AtomicU32::new(UNSET);
 
 fn primary_tray() -> Option<HWND> {
-    unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).ok() }
+    crate::tray::explorer_tray()
 }
 
 fn all_trays() -> Vec<HWND> {
@@ -102,9 +102,10 @@ pub fn startup_state() -> Option<u32> {
     Some(STARTUP_STATE.load(Ordering::SeqCst)).filter(|state| *state != UNSET)
 }
 
-/// True when Explorer's taskbar is in auto-hide, in which case it reserves no screen space.
-pub fn autohide_active() -> bool {
-    get_state().is_some_and(|state| state & ABS_AUTOHIDE != 0)
+/// True when Explorer's taskbar was already in auto-hide before the first `hide`, so it reserved
+/// no screen space at startup.
+pub fn startup_autohide() -> bool {
+    startup_state().is_some_and(|state| state & ABS_AUTOHIDE != 0)
 }
 
 /// Hides the taskbar again if Explorer brought it back (it does so when appbars change).
@@ -129,6 +130,7 @@ pub fn restore() -> u32 {
     };
     set_state(state);
     set_visible(true);
+    crate::tray::give_back(false);
     state
 }
 

@@ -213,6 +213,15 @@ impl AppBar {
         }
     }
 
+    /// Registers again after Explorer restarted, which forgets every appbar, and reserves the
+    /// edge once more.
+    pub fn reregister(&self) -> String {
+        let mut abd = data(self.hwnd);
+        abd.uCallbackMessage = self.callback_message;
+        unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
+        self.set_pos()
+    }
+
     pub fn activate(&self) {
         let mut abd = data(self.hwnd);
         unsafe { SHAppBarMessage(ABM_ACTIVATE, &mut abd) };

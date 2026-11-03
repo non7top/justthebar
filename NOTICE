@@ -4,3 +4,8 @@ Copyright 2026 Vladimir Berezhnoy
 This product is a Rust port of system logic from Cairo Desktop's ManagedShell
 (https://github.com/cairoshell/ManagedShell), licensed under the Apache License 2.0.
 Files derived from ManagedShell are marked as such in their headers.
+
+The reading of Start button art strips (crates/jtb-core/src/startart.rs) follows the button
+loading code of Open-Shell (https://github.com/Open-Shell/Open-Shell-Menu), MIT licensed,
+Copyright (c) 2009-2017 Ivo Beltchev, (c) 2017-2018 The Open-Shell Team. No Open-Shell
+artwork is included; users supply their own button image.

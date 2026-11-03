@@ -1,34 +1,43 @@
 #![windows_subsystem = "windows"]
 
 mod bar;
+mod widgets;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use jtb_core::config::Config;
+use jtb_core::config::PinConfig;
+use jtb_core::config::{Action, Button, Config, StartConfig, Target};
+use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
-use jtb_core::scene::ButtonView;
-use jtb_core::tasks::Tasks;
+use jtb_core::scene::{ButtonView, Drag, StartView, TrayView, WidgetView};
+use jtb_core::startart;
+use jtb_core::state::State as UiState;
+use jtb_core::tasks::{Task, Tasks};
+use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons, TrayKey};
+use jtb_core::traypacket;
 use jtb_core::Edge;
-use jtb_win::{explorer, monitors, tasks};
+use jtb_win::{explorer, menuhost, monitors, shell, startmenu, tasks, tray};
 use windows::core::{w, Result};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, KillTimer, PostQuitMessage,
-    RegisterClassW, SetTimer, TranslateMessage, MSG, WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW,
-    WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW, KillTimer,
+    PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, MSG, WM_DISPLAYCHANGE, WM_TIMER,
+    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 const TIMER_HIDE_EXPLORER: usize = 1;
 const TIMER_QUIT: usize = 2;
 const TIMER_CLOCK: usize = 3;
+const TIMER_WIDGETS: usize = 9;
 const TIMER_CONFIG: usize = 4;
 const TIMER_ZORDER: usize = 7;
 
@@ -41,12 +50,25 @@ struct State {
     force_hide_explorer: bool,
 }
 
+/// Normal, hot and pressed frames of the Start button.
+type StartFrames = [Arc<Icon>; 3];
+
 thread_local! {
     static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
     static CONTROL: Cell<Option<HWND>> = const { Cell::new(None) };
     static EXPLORER_HIDDEN: Cell<bool> = const { Cell::new(false) };
     static TASKS: RefCell<Tasks> = RefCell::new(Tasks::default());
     static ICONS: RefCell<HashMap<isize, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
+    static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
+    static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
+    static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
+    static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
+    static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
+    /// Where the Start button was clicked, in screen coordinates, until the menu is toggled.
+    static START_RECT: Cell<Option<RECT>> = const { Cell::new(None) };
+    /// The edge (`ABE_*`) and screen rectangle of the bar whose Start button was clicked last.
+    static START_BAR: Cell<Option<(u32, RECT)>> = const { Cell::new(None) };
+    static START_BAR_WINDOW: Cell<isize> = const { Cell::new(0) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -56,7 +78,7 @@ fn exe_sibling(name: &str) -> Option<PathBuf> {
     std::env::current_exe().ok().map(|p| p.with_file_name(name))
 }
 
-/// Appends a line, prefixed with milliseconds since start, to `jtb.log` next to the exe;
+/// Appends a line, prefixed with milliseconds since start and the process id, to `jtb.log` next to the exe;
 /// failures are ignored.
 fn log(line: &str) {
     use std::io::Write;
@@ -73,7 +95,7 @@ fn log(line: &str) {
         .append(true)
         .open(path)
     {
-        let _ = writeln!(file, "{ms:>7} {line}");
+        let _ = writeln!(file, "{ms:>7} [{}] {line}", std::process::id());
     }
 }
 
@@ -113,9 +135,13 @@ struct ExplorerGuard;
 
 impl Drop for ExplorerGuard {
     fn drop(&mut self) {
+        menuhost::close();
         if EXPLORER_HIDDEN.get() {
             let state = explorer::restore();
             log(&format!("explorer restored, state={state}"));
+        }
+        if tray::give_back(false) {
+            log("tray: role given back on exit");
         }
     }
 }
@@ -135,6 +161,7 @@ fn load_config(path: &PathBuf) -> std::result::Result<Config, String> {
 
 /// Applies `config`: explorer visibility first, then every bar is rebuilt.
 fn apply(config: &Config, force_hide_explorer: bool) {
+    widgets::rebuild(&config.widgets);
     let hide = config.hide_explorer_taskbar || force_hide_explorer;
     let control = CONTROL.get();
     if hide != EXPLORER_HIDDEN.get() {
@@ -162,9 +189,10 @@ fn apply(config: &Config, force_hide_explorer: bool) {
     bar::destroy_all();
     let monitors = monitors::list();
     let mut planned = Vec::new();
-    for bar_config in config.bars.iter().filter(|b| b.enabled) {
+    for (index, bar_config) in config.bars.iter().enumerate().filter(|(_, b)| b.enabled) {
         match monitors::resolve(&monitors, bar_config.monitor) {
             Some((monitor_index, monitor_rect)) => planned.push(bar::Planned {
+                index,
                 config: bar_config.clone(),
                 monitor_index,
                 monitor_rect,
@@ -176,7 +204,244 @@ fn apply(config: &Config, force_hide_explorer: bool) {
             )),
         }
     }
-    bar::build(planned, hide && !explorer::autohide_active());
+    bar::build(planned, hide && !explorer::startup_autohide(), config);
+    sync_tray(config.tray.enabled);
+}
+
+/// Takes or gives back the tray role to match the config.
+fn sync_tray(enabled: bool) {
+    if enabled == tray::is_active() {
+        return;
+    }
+    if enabled {
+        match tray::create(on_tray_packet, on_icon_query, on_taskbar_pos) {
+            Ok(()) => log("tray: role taken, Explorer's Shell_TrayWnd sent to the bottom"),
+            Err(e) => log(&format!("tray: could not take the role: {e}")),
+        }
+    } else {
+        tray::give_back(false);
+        TRAY_ICONS.with_borrow_mut(|icons| *icons = TrayIcons::default());
+        log("tray: role given back");
+    }
+}
+
+/// A notify icon packet from the tray window. Returns whether it was taken.
+/// Apps that crash never delete their icon; forget the icons whose owner window is gone.
+fn drop_dead_tray_icons() {
+    if TRAY_ICONS.with_borrow_mut(|icons| icons.drop_dead(tray::owner_alive)) {
+        log("tray: dropped icons of exited apps");
+    }
+}
+
+fn on_tray_packet(data: &[u8]) -> bool {
+    let Some(packet) = traypacket::parse_notify(data) else {
+        log(&format!("tray: packet of {} bytes ignored", data.len()));
+        return false;
+    };
+    let owner = tasks::process_path(packet.hwnd)
+        .and_then(|path| path.rsplit('\\').next().map(str::to_string))
+        .unwrap_or_default();
+    let valid = packet.is_valid();
+    if packet.is_shell_status_icon() {
+        return false;
+    }
+    // An app that deleted its icon may keep modifying it; Explorer has no such icon, so refuse.
+    if packet.is_modify() && TRAY_ICONS.with_borrow(|icons| icons.was_deleted(packet.key())) {
+        log(&format!(
+            "tray: modify of a deleted icon refused owner={owner} id={}",
+            packet.id
+        ));
+        return false;
+    }
+    let icon = if valid && packet.wants_icon() {
+        let id = next_icon_id();
+        tasks::icon_from_handle(packet.icon_handle, id).map(Arc::new)
+    } else {
+        None
+    };
+    let drawn = icon.is_some();
+    let changes = packet.changes(icon);
+    let (total, redraw) = TRAY_ICONS.with_borrow_mut(|icons| {
+        let mut redraw = false;
+        for change in changes {
+            redraw |= icons.apply(change);
+        }
+        (icons.len(), redraw)
+    });
+    log(&format!(
+        "tray: message={} owner={owner} id={} flags={:#x} tip={:?} valid={valid} icon={drawn} icons={total}",
+        packet.message, packet.id, packet.flags, packet.tip
+    ));
+    if redraw {
+        bar::invalidate_all();
+    }
+    valid
+}
+
+/// Answers where an icon is on screen; none when it is not one of the bar's, so Explorer answers.
+fn on_icon_query(data: &[u8]) -> Option<isize> {
+    let query = traypacket::parse_icon_query(data)?;
+    let key = TrayKey {
+        owner: query.hwnd,
+        id: query.id,
+    };
+    let at = TRAY_ICONS.with_borrow(|icons| {
+        icons
+            .visible()
+            .filter(|i| i.icon.is_some())
+            .position(|i| i.key == key)
+    })?;
+    let rect = bar::tray_icon_screen_rect(current_config().tray.bar, at)?;
+    let (x, y) = match query.message {
+        1 => (rect.left, rect.top),
+        2 => (rect.right, rect.bottom),
+        _ => return None,
+    };
+    log(&format!(
+        "tray: icon rect asked message={} hwnd={:#x} id={} -> ({x}, {y})",
+        query.message, query.hwnd, query.id
+    ));
+    Some(traypacket::pack_point(x, y))
+}
+
+fn next_icon_id() -> u64 {
+    let id = NEXT_ICON_ID.get();
+    NEXT_ICON_ID.set(id + 1);
+    id
+}
+
+/// The icons the bar with this config index shows in its notification area (the tray icons, then
+/// the widgets); none for other bars.
+pub fn tray_views(bar_index: usize, hovered: Option<usize>) -> Vec<TrayView> {
+    let config = current_config();
+    if config.tray.bar != bar_index {
+        return Vec::new();
+    }
+    let mut icons: Vec<Arc<Icon>> = Vec::new();
+    if config.tray.enabled && tray::is_active() {
+        TRAY_ICONS.with_borrow(|list| icons.extend(list.visible().filter_map(|i| i.icon.clone())));
+    }
+    icons.extend(widgets::tray_icons());
+    icons
+        .into_iter()
+        .enumerate()
+        .map(|(at, icon)| TrayView {
+            icon,
+            hovered: hovered == Some(at),
+        })
+        .collect()
+}
+
+/// The widgets the bar with this config index shows on the bar itself; `hovered` is the cell the
+/// pointer is on, counted from the first tray icon (the widgets' cells come last).
+pub fn widget_views(
+    bar_index: usize,
+    tray_cells: usize,
+    hovered: Option<usize>,
+) -> Vec<WidgetView> {
+    let config = current_config();
+    if config.tray.bar != bar_index {
+        return Vec::new();
+    }
+    widgets::bar_views(hovered.and_then(|at| at.checked_sub(tray_cells)))
+}
+
+/// How many cells of the notification area belong to tray icons; the widgets follow them.
+fn tray_cell_count() -> usize {
+    TRAY_ICONS.with_borrow(|icons| icons.visible().filter(|i| i.icon.is_some()).count())
+}
+
+/// The icon drawn in cell `at` of the notification area (the cells follow `tray_views`).
+fn tray_icon_at(at: usize) -> Option<TrayIcon> {
+    TRAY_ICONS.with_borrow(|icons| {
+        icons
+            .visible()
+            .filter(|i| i.icon.is_some())
+            .nth(at)
+            .cloned()
+    })
+}
+
+/// The tooltip of the icon or widget in cell `at`; none when it has no text.
+pub fn tray_tooltip(at: usize) -> Option<String> {
+    let tray_cells = tray_cell_count();
+    if at >= tray_cells {
+        return widgets::tooltip(at - tray_cells);
+    }
+    tray_icon_at(at)
+        .map(|i| i.tooltip)
+        .filter(|tip| !tip.is_empty())
+}
+
+/// The cursor in screen coordinates as the callback messages carry it: x low, y high.
+fn cursor_word() -> u32 {
+    let mut at = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut at);
+    }
+    (at.x as u16 as u32) | ((at.y as u16 as u32) << 16)
+}
+
+/// Passes a mouse event on an icon to the app that owns it.
+pub fn tray_mouse(at: usize, event: Mouse) {
+    let tray_cells = tray_cell_count();
+    if at >= tray_cells {
+        if matches!(
+            event,
+            Mouse::Down {
+                side: Side::Left,
+                double: false
+            }
+        ) {
+            widgets::click(at - tray_cells);
+        }
+        return;
+    }
+    let Some(icon) = tray_icon_at(at) else { return };
+    let owner = icon.key.owner;
+    if icon.callback_message == 0 || !tray::owner_alive(owner) {
+        return;
+    }
+    if matches!(event, Mouse::Down { .. }) {
+        tray::allow_foreground(owner);
+    }
+    let mouse = cursor_word();
+    for message in icon.mouse_messages(event) {
+        let (wparam, lparam) = icon.callback_params(message, mouse);
+        if !tray::notify_owner(owner, icon.callback_message, wparam, lparam) {
+            log(&format!(
+                "tray: owner {owner:#x} did not take message {message:#x}"
+            ));
+        }
+    }
+}
+
+/// A button press on an icon; two presses within the double click time make a double click.
+pub fn tray_press(at: usize, side: Side) {
+    let slot = side as usize;
+    let now = std::time::Instant::now();
+    let limit = std::time::Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
+    let mut last = LAST_PRESS.get();
+    let double = last[slot].is_some_and(|t| now.duration_since(t) <= limit);
+    last[slot] = if double { None } else { Some(now) };
+    LAST_PRESS.set(last);
+    tray_mouse(at, Mouse::Down { side, double });
+}
+
+/// The pointer moved from icon `before` to icon `now` (either may be none) or within one.
+pub fn tray_hover_events(before: Option<usize>, now: Option<usize>) {
+    if before == now {
+        if let Some(at) = now {
+            tray_mouse(at, Mouse::Move);
+        }
+        return;
+    }
+    if let Some(at) = before {
+        tray_mouse(at, Mouse::Leave);
+    }
+    if let Some(at) = now {
+        tray_mouse(at, Mouse::Enter);
+    }
 }
 
 fn current_settings() -> Option<(Config, bool)> {
@@ -222,10 +487,282 @@ fn poll_config() {
     }
 }
 
-/// The tasks on the monitor with this rect, in order, with what their buttons show.
-pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
-    TASKS.with_borrow(|tasks| {
-        tasks
+/// What a bar button stands for.
+enum Click {
+    Window {
+        id: isize,
+        key: String,
+    },
+    Header {
+        key: String,
+        windows: Vec<isize>,
+        pin: Option<usize>,
+    },
+    Start,
+}
+
+impl Click {
+    /// Key of the group the button belongs to.
+    fn key(&self) -> &str {
+        match self {
+            Click::Window { key, .. } | Click::Header { key, .. } => key,
+            Click::Start => "start",
+        }
+    }
+}
+
+fn current_config() -> Config {
+    STATE.with_borrow(|s| s.as_ref().map(|s| s.config.clone()).unwrap_or_default())
+}
+
+fn state_file() -> Option<PathBuf> {
+    exe_sibling("jtb.state.json")
+}
+
+fn load_state() {
+    let Some(path) = state_file() else { return };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match UiState::parse(&text) {
+            Ok(state) => UI_STATE.set(state),
+            Err(e) => log(&format!("state file ignored: {e}")),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => log(&format!("state file not read: {e}")),
+    }
+}
+
+fn save_state() {
+    let Some(path) = state_file() else { return };
+    let json = UI_STATE.with_borrow(|s| s.to_json());
+    if let Err(e) = std::fs::write(&path, json) {
+        log(&format!("state file not written: {e}"));
+    }
+}
+
+fn effective_pins(config: &Config) -> Vec<PinConfig> {
+    UI_STATE.with_borrow(|s| s.effective_pins(&config.pins))
+}
+
+/// The icon of an executable, loaded once.
+fn exe_icon(path: &str) -> Option<Arc<Icon>> {
+    EXE_ICONS.with_borrow_mut(|cache| {
+        cache
+            .entry(path.to_string())
+            .or_insert_with(|| {
+                let id = NEXT_ICON_ID.get();
+                let icon = tasks::exe_icon(path, id).map(Arc::new);
+                if icon.is_some() {
+                    NEXT_ICON_ID.set(id + 1);
+                }
+                icon
+            })
+            .clone()
+    })
+}
+
+/// The Start button art, read once per configured file name; `None` gives the drawn button.
+fn start_frames(image: &str) -> Option<StartFrames> {
+    if image.trim().is_empty() {
+        return None;
+    }
+    START_ART.with_borrow_mut(|cache| {
+        if cache.as_ref().is_none_or(|(loaded, _)| loaded != image) {
+            *cache = Some((image.to_string(), load_start_art(image)));
+        }
+        cache.as_ref().and_then(|(_, frames)| frames.clone())
+    })
+}
+
+fn load_start_art(image: &str) -> Option<StartFrames> {
+    let path = if std::path::Path::new(image).is_absolute() {
+        PathBuf::from(image)
+    } else {
+        exe_sibling(image)?
+    };
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            log(&format!("start art not read, drawing the button: {e}"));
+            return None;
+        }
+    };
+    let art = match startart::load(&bytes) {
+        Ok(art) => art,
+        Err(e) => {
+            log(&format!("start art ignored, drawing the button: {e}"));
+            return None;
+        }
+    };
+    log(&format!(
+        "start art loaded, frames {}x{}",
+        art.normal.width, art.normal.height
+    ));
+    let icon = |frame: startart::Frame| {
+        let id = NEXT_ICON_ID.get();
+        NEXT_ICON_ID.set(id + 1);
+        Arc::new(Icon {
+            id,
+            width: frame.width,
+            height: frame.height,
+            bgra: frame.bgra,
+        })
+    };
+    Some([icon(art.normal), icon(art.hot), icon(art.pressed)])
+}
+
+fn start_row(config: &StartConfig) -> (ButtonView, Click) {
+    let view = ButtonView {
+        title: config.label.clone(),
+        active: false,
+        hovered: false,
+        minimized: false,
+        flashing: false,
+        title_changed: false,
+        child: false,
+        header: false,
+        drag: Drag::None,
+        start: Some(StartView {
+            frames: start_frames(&config.image),
+            blend: 0.0,
+            pressed: false,
+            size: config.size as f32,
+        }),
+        icon: None,
+    };
+    (view, Click::Start)
+}
+
+/// Remembers where the Start button the user just clicked is, for `run_start`.
+pub fn note_start_rect(rect: RECT) {
+    START_RECT.set(Some(rect));
+}
+
+/// Remembers which bar the Start button was clicked on: Open-Shell asks where the taskbar is and
+/// opens the menu on that side.
+pub fn note_start_bar(edge: Edge, rect: RECT, window: HWND) {
+    START_BAR_WINDOW.set(window.0 as isize);
+    let abe = match edge {
+        Edge::Left => 0,
+        Edge::Top => 1,
+        Edge::Right => 2,
+        Edge::Bottom => 3,
+    };
+    START_BAR.set(Some((abe, rect)));
+}
+
+fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
+    let pos = START_BAR.get()?;
+    log(&format!(
+        "start: taskbar position asked by process {process} -> {pos:?}"
+    ));
+    Some(pos)
+}
+
+fn run_start(config: &StartConfig) {
+    log(&format!(
+        "start button: {} {:?}",
+        config.command, config.args
+    ));
+    let held = START_RECT.take();
+    if let Some(button) = held.filter(|_| config.in_process) {
+        match open_in_process(config, button) {
+            Ok(()) => {
+                log(&format!(
+                    "start: opened Open-Shell's menu in this process: {}",
+                    menuhost::describe()
+                ));
+                return;
+            }
+            Err(error) => log(&format!("start: in-process menu failed: {error}")),
+        }
+    }
+    if let Some(rect) = held {
+        let moved = startmenu::move_button(rect);
+        log(&format!(
+            "start: Open-Shell button asked to move to {rect:?}, now at {moved:?}"
+        ));
+    }
+    let toggle = config
+        .command
+        .to_ascii_lowercase()
+        .ends_with("startmenu.exe")
+        && config.args.iter().any(|arg| arg == "-toggle");
+    if toggle && startmenu::post_toggle() {
+        log("start: posted the toggle message to Explorer's taskbar");
+    } else {
+        launch_app(&config.command, &config.args);
+    }
+    if let Some(rect) = held {
+        std::thread::spawn(move || hold_start_button(rect));
+    }
+}
+
+fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let (edge, bar) = START_BAR.get().ok_or("no bar was clicked")?;
+    let monitor = unsafe { MonitorFromRect(&bar, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return Err("no monitor information".to_string());
+    }
+    let dll = std::path::Path::new(&config.command)
+        .parent()
+        .ok_or("the start command has no folder")?
+        .join("StartMenuDLL.dll");
+    menuhost::toggle(
+        &dll.to_string_lossy(),
+        menuhost::StartMenuParams {
+            start_button: HWND::default(),
+            taskbar: HWND(START_BAR_WINDOW.get() as *mut _),
+            start_button_rect: button,
+            taskbar_rect: bar,
+            monitor_rect: info.rcWork,
+            edge,
+        },
+    )
+}
+
+/// Open-Shell puts its button back about 200 ms after a click and reads it for the menu position
+/// at about the same time, so the button is moved again until the menu has opened.
+fn hold_start_button(rect: RECT) {
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_millis(700) {
+        let at = startmenu::button_rect();
+        if at != Some(rect) {
+            log(&format!(
+                "start: +{} ms Open-Shell button was moved to {at:?}",
+                started.elapsed().as_millis()
+            ));
+            startmenu::move_button(rect);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    log(&format!(
+        "start: Open-Shell log {:?}",
+        startmenu::menu_log_geometry()
+    ));
+}
+
+/// The buttons of the bar on `monitor` (`None` shows every window), with what a click on each does.
+fn build_bar(
+    monitor: Option<RECT>,
+    config: &Config,
+    pins: &[PinConfig],
+) -> Vec<(ButtonView, Click)> {
+    let rules = Rules::new(&config.groups);
+    let (folded, order) = UI_STATE.with_borrow(|s| {
+        (
+            s.folded.iter().cloned().collect::<HashSet<String>>(),
+            s.order.clone(),
+        )
+    });
+    let mut bar = TASKS.with_borrow(|tasks| {
+        let visible: Vec<Task> = tasks
             .items()
             .iter()
             .filter(|task| {
@@ -233,22 +770,289 @@ pub fn bar_tasks(monitor: Option<RECT>) -> Vec<(isize, ButtonView)> {
                     monitors::rect_of_window(tasks::hwnd_of(task.id)).is_none_or(|r| r == rect)
                 })
             })
-            .map(|task| {
-                let view = ButtonView {
-                    title: task.title.clone(),
-                    active: tasks.active() == Some(task.id),
-                    icon: ICONS.with_borrow(|icons| icons.get(&task.id).cloned().flatten()),
-                };
-                (task.id, view)
+            .cloned()
+            .collect();
+        let icon_of = |id: isize| ICONS.with_borrow(|icons| icons.get(&id).cloned().flatten());
+        let rows = build_rows(
+            &visible,
+            pins,
+            &rules,
+            &folded,
+            &order,
+            config.grouping.mode,
+        );
+        rows.into_iter()
+            .map(|row| match row {
+                Row::Window { id, child } => {
+                    let task = tasks.get(id).cloned().unwrap_or(Task {
+                        id,
+                        title: String::new(),
+                        exe: String::new(),
+                    });
+                    let view = ButtonView {
+                        title: task.title.clone(),
+                        active: tasks.active() == Some(id),
+                        hovered: false,
+                        minimized: tasks::is_minimized(id),
+                        flashing: tasks.is_flashing(id),
+                        title_changed: tasks.has_new_title(id),
+                        child,
+                        header: false,
+                        drag: Drag::None,
+                        start: None,
+                        icon: icon_of(id),
+                    };
+                    let key = rules.group_of(&task).key;
+                    (view, Click::Window { id, key })
+                }
+                Row::Header {
+                    key,
+                    name,
+                    pin,
+                    windows,
+                    folded,
+                } => {
+                    let active = windows.iter().any(|id| tasks.active() == Some(*id));
+                    let title = if windows.is_empty() {
+                        name
+                    } else {
+                        let marker = if folded { "\u{25B8}" } else { "\u{25BE}" };
+                        format!("{marker} {name} ({})", windows.len())
+                    };
+                    let view = ButtonView {
+                        title,
+                        active,
+                        hovered: false,
+                        minimized: windows.iter().all(|id| tasks::is_minimized(*id)),
+                        flashing: windows.iter().any(|id| tasks.is_flashing(*id)),
+                        title_changed: !active && windows.iter().any(|id| tasks.has_new_title(*id)),
+                        child: false,
+                        header: true,
+                        drag: Drag::None,
+                        start: None,
+                        icon: pin
+                            .and_then(|i| pins.get(i))
+                            .and_then(|p| exe_icon(&p.path))
+                            .or_else(|| windows.first().and_then(|id| icon_of(*id))),
+                    };
+                    (view, Click::Header { key, windows, pin })
+                }
             })
-            .collect()
+            .collect::<Vec<_>>()
+    });
+    if config.start.enabled {
+        bar.insert(0, start_row(&config.start));
+    }
+    bar
+}
+
+/// Whether the bars show a Start button.
+pub fn start_enabled() -> bool {
+    current_config().start.enabled
+}
+
+/// What the bar on `monitor` shows, one entry per button.
+pub fn bar_views(monitor: Option<RECT>) -> Vec<ButtonView> {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    build_bar(monitor, &config, &pins)
+        .into_iter()
+        .map(|(view, _)| view)
+        .collect()
+}
+
+fn toggle_fold(key: &str) {
+    UI_STATE.with_borrow_mut(|s| s.toggle_fold(key));
+    save_state();
+    bar::invalidate_all();
+}
+
+fn launch_app(path: &str, args: &[String]) {
+    if path.is_empty() || !tasks::launch(path, args) {
+        log(&format!("launch failed: {path}"));
+    }
+}
+
+fn exe_of(id: isize) -> String {
+    TASKS.with_borrow(|t| t.get(id).map(|t| t.exe.clone()).unwrap_or_default())
+}
+
+/// Starts the app a button stands for: the pin's program, else the window's executable.
+fn launch_click(click: &Click, pins: &[PinConfig]) {
+    match click {
+        Click::Window { id, .. } => launch_app(&exe_of(*id), &[]),
+        Click::Start => {}
+        Click::Header { windows, pin, .. } => match pin.and_then(|i| pins.get(i)) {
+            Some(pin) => launch_app(&pin.path, &pin.args),
+            None => launch_app(
+                &windows.first().map(|id| exe_of(*id)).unwrap_or_default(),
+                &[],
+            ),
+        },
+    }
+}
+
+/// A click of `button` on the `index`th button of the bar on `monitor`.
+pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    let Some((view, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
+        return;
+    };
+    let target = match click {
+        Click::Window { .. } => Target::Window,
+        Click::Header { .. } => Target::Header,
+        Click::Start => {
+            if button == Button::Left {
+                run_start(&config.start);
+            }
+            return;
+        }
+    };
+    match config.mouse.action(target, button) {
+        Action::None => {}
+        Action::Activate => match &click {
+            Click::Window { id, .. } => {
+                let foreground = tasks::foreground();
+                let active = view.active || foreground == Some(*id);
+                log(&format!(
+                    "click: window {id} active={} foreground={foreground:?}",
+                    view.active
+                ));
+                tasks::activate_or_minimize(*id, active);
+            }
+            Click::Header { windows, .. } => match windows.first() {
+                Some(id) => tasks::activate_or_minimize(*id, false),
+                None => launch_click(&click, &pins),
+            },
+            Click::Start => {}
+        },
+        Action::Launch => launch_click(&click, &pins),
+        Action::ToggleFold => match &click {
+            Click::Header { windows, .. } if windows.is_empty() => launch_click(&click, &pins),
+            _ => toggle_fold(click.key()),
+        },
+    }
+}
+
+/// Drags the `from`th button of the bar on `monitor` to where the `to`th is.
+pub fn reorder(monitor: Option<RECT>, from: usize, to: usize) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    let bar = build_bar(monitor, &config, &pins);
+    let (Some(source), Some(target)) = (bar.get(from), bar.get(to)) else {
+        return;
+    };
+    if matches!(source.1, Click::Start) || matches!(target.1, Click::Start) {
+        return;
+    }
+    let (from_key, to_key) = (source.1.key().to_string(), target.1.key().to_string());
+    if source.0.child {
+        if let (Click::Window { id: from_id, .. }, Click::Window { id: to_id, .. }) =
+            (&source.1, &target.1)
+        {
+            if from_key == to_key && from_id != to_id {
+                log(&format!("window {from_id} moved to window {to_id}"));
+                TASKS.with_borrow_mut(|t| t.move_to(*from_id, *to_id));
+                bar::invalidate_all();
+            }
+        }
+        return;
+    }
+    if from_key == to_key {
+        return;
+    }
+    log(&format!("group {from_key} moved to {to_key}"));
+    let mut sequence: Vec<String> = Vec::new();
+    for (_, click) in &bar {
+        if !sequence.iter().any(|k| k == click.key()) {
+            sequence.push(click.key().to_string());
+        }
+    }
+    UI_STATE.with_borrow_mut(|s| s.move_key(&sequence, &from_key, &to_key));
+    save_state();
+    bar::invalidate_all();
+}
+
+/// Files dropped on a bar become pins.
+pub fn pin_files(paths: Vec<String>) {
+    let mut added = false;
+    for path in paths {
+        let (program, args) = if path.to_lowercase().ends_with(".lnk") {
+            match shell::resolve_shortcut(&path) {
+                Some(resolved) => resolved,
+                None => {
+                    log(&format!("shortcut not resolved: {path}"));
+                    continue;
+                }
+            }
+        } else {
+            (path, Vec::new())
+        };
+        added |= pin_program(&program, args);
+    }
+    if added {
+        save_state();
+        bar::invalidate_all();
+    }
+}
+
+fn pin_program(path: &str, args: Vec<String>) -> bool {
+    let name = std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    UI_STATE.with_borrow_mut(|s| {
+        s.add_pin(PinConfig {
+            name,
+            path: path.to_string(),
+            args,
+        })
     })
 }
 
-/// A click on the `index`th task button of the bar on `monitor`.
-pub fn click_task(monitor: Option<RECT>, index: usize) {
-    if let Some((id, view)) = bar_tasks(monitor).into_iter().nth(index) {
-        tasks::activate_or_minimize(id, view.active);
+/// The right-click menu of the `index`th button of the bar on `monitor`.
+pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    let Some((_, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
+        return;
+    };
+    match &click {
+        Click::Window { id, .. } => {
+            let exe = exe_of(*id);
+            let items = [("Pin this app", !exe.is_empty()), ("Close window", true)];
+            match shell::popup_menu(hwnd, &items) {
+                Some(0) => {
+                    if pin_program(&exe, Vec::new()) {
+                        save_state();
+                        bar::invalidate_all();
+                    }
+                }
+                Some(1) => tasks::close(*id),
+                _ => {}
+            }
+        }
+        Click::Start => {}
+        Click::Header { key, pin, .. } => {
+            let items = [
+                ("Launch new", true),
+                ("Fold or unfold", true),
+                ("Unpin", pin.is_some()),
+            ];
+            match shell::popup_menu(hwnd, &items) {
+                Some(0) => launch_click(&click, &pins),
+                Some(1) => toggle_fold(key),
+                Some(2) => {
+                    if let Some(pin) = pin.and_then(|i| pins.get(i)) {
+                        UI_STATE.with_borrow_mut(|s| s.remove_pin(&pin.path));
+                        save_state();
+                        bar::invalidate_all();
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -286,11 +1090,26 @@ fn refresh_icons() {
     ICONS.with_borrow_mut(|icons| icons.retain(|id, _| ids.contains(id)));
 }
 
+fn fill_exe(list: &mut Tasks, id: isize) {
+    if list.get(id).is_some_and(|task| task.exe.is_empty()) {
+        list.set_exe(id, tasks::process_path(id).unwrap_or_default());
+    }
+}
+
 fn on_shell_hook(code: usize, id: isize) {
     TASKS.with_borrow_mut(|list| match code {
-        tasks::HSHELL_WINDOWCREATED | tasks::HSHELL_REDRAW => {
+        tasks::HSHELL_FLASH => {
             if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
+                list.set_flashing(id, true);
+            }
+        }
+        tasks::HSHELL_WINDOWCREATED | tasks::HSHELL_REDRAW => {
+            list.set_flashing(id, false);
+            if tasks::is_taskbar_window(id) {
+                list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
             } else {
                 list.remove(id);
             }
@@ -301,6 +1120,7 @@ fn on_shell_hook(code: usize, id: isize) {
                 list.set_active(None);
             } else if tasks::is_taskbar_window(id) {
                 list.upsert(id, tasks::title(id));
+                fill_exe(list, id);
                 list.set_active(Some(id));
             }
         }
@@ -315,6 +1135,7 @@ fn on_shell_hook(code: usize, id: isize) {
 
 /// Removes all appbars and ends the message loop.
 pub fn quit() {
+    jtb_win::flyout::release_hook();
     bar::destroy_all();
     unsafe { PostQuitMessage(0) };
 }
@@ -326,9 +1147,12 @@ fn main() -> Result<()> {
         "start quit_after={:?} restore={}",
         args.quit_after_secs, args.restore_explorer
     ));
+    load_state();
     if args.restore_explorer {
         let state = explorer::restore();
         log(&format!("explorer restored, state={state}"));
+        tray::give_back(true);
+        log("tray: sent TaskbarCreated");
         return Ok(());
     }
 
@@ -393,6 +1217,7 @@ fn main() -> Result<()> {
         });
         apply(&config, args.hide_explorer);
         SetTimer(Some(control), TIMER_CLOCK, 1000, None);
+        SetTimer(Some(control), TIMER_WIDGETS, 100, None);
         SetTimer(Some(control), TIMER_CONFIG, 1000, None);
         SetTimer(Some(control), TIMER_ZORDER, 200, None);
         if let Some(secs) = args.quit_after_secs {
@@ -418,6 +1243,8 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                 }
                 TIMER_CLOCK => {
+                    drop_dead_tray_icons();
+                    widgets::refresh();
                     sync_tasks();
                     bar::invalidate_all();
                     let now = explorer::snapshot();
@@ -428,7 +1255,29 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         }
                     });
                 }
-                TIMER_ZORDER => bar::keep_above_explorer(),
+                TIMER_WIDGETS => {
+                    if widgets::refresh_quick() {
+                        bar::invalidate_all();
+                    }
+                    if let Some(line) = jtb_win::flyout::tick() {
+                        log(&line);
+                    }
+                    for line in jtb_win::flyout::take_lines() {
+                        log(&line);
+                    }
+                    if let Some(line) = jtb_win::langmenu::tick() {
+                        log(&line);
+                    }
+                }
+                TIMER_ZORDER => {
+                    bar::keep_above_explorer();
+                    if tray::follow_explorer() {
+                        log("tray: Explorer restarted, took the tray role again");
+                    }
+                    if tray::keep_on_top() {
+                        log("tray: raised our Shell_TrayWnd");
+                    }
+                }
                 TIMER_CONFIG => poll_config(),
                 TIMER_QUIT => {
                     unsafe {
