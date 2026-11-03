@@ -1,8 +1,9 @@
 //! Talks to `jtb_hook.dll` inside `ShellHost.exe`, which places the quick settings flyout before it
 //! is shown (see the `jtb-hook` crate for the protocol).
+use std::cell::RefCell;
 use std::path::PathBuf;
 
-use windows::core::{s, w, HSTRING};
+use windows::core::{s, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -15,44 +16,61 @@ const SET: usize = 2;
 const CLEAR: usize = 3;
 const PING: usize = 4;
 
-fn message() -> u32 {
-    unsafe { RegisterWindowMessageW(w!("JustTheBar.FlyoutPlacement")) }
+/// The staged DLL and the message its subclass listens to.
+struct Staged {
+    path: PathBuf,
+    message: u32,
 }
 
-fn send(window: HWND, command: usize, lparam: isize) -> isize {
-    unsafe {
-        SendMessageW(
-            window,
-            message(),
-            Some(WPARAM(command)),
-            Some(LPARAM(lparam)),
-        )
-    }
-    .0
+thread_local! {
+    static STAGED: RefCell<Option<Staged>> = const { RefCell::new(None) };
+}
+
+fn register(name: &str) -> u32 {
+    let wide: Vec<u16> = format!("{name}\0").encode_utf16().collect();
+    unsafe { RegisterWindowMessageW(PCWSTR(wide.as_ptr())) }
+}
+
+fn send(window: HWND, message: u32, command: usize, lparam: isize) -> isize {
+    unsafe { SendMessageW(window, message, Some(WPARAM(command)), Some(LPARAM(lparam))) }.0
 }
 
 /// A copy of the DLL under a name made from its content, so a rebuilt DLL never has to replace one
-/// that `ShellHost.exe` still has loaded.
-fn staged_dll() -> Result<PathBuf, String> {
+/// that `ShellHost.exe` still has loaded; the name also tells the DLL which message to use.
+fn staged() -> Result<(PathBuf, u32), String> {
+    if let Some(known) = STAGED.with_borrow(|s| s.as_ref().map(|s| (s.path.clone(), s.message))) {
+        return Ok(known);
+    }
     let exe = std::env::current_exe().map_err(|e| format!("own path: {e}"))?;
     let source = exe.with_file_name("jtb_hook.dll");
     let bytes = std::fs::read(&source).map_err(|e| format!("{}: {e}", source.display()))?;
     let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
     });
-    let staged = std::env::temp_dir().join(format!("jtb-hook-{hash:016x}.dll"));
-    if !staged.exists() {
-        std::fs::write(&staged, &bytes).map_err(|e| format!("{}: {e}", staged.display()))?;
+    let path = std::env::temp_dir().join(format!("jtb-hook-{hash:016x}.dll"));
+    if !path.exists() {
+        std::fs::write(&path, &bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     }
-    Ok(staged)
+    let message = register(&format!("JustTheBar.FlyoutPlacement.{hash:016x}"));
+    STAGED.set(Some(Staged {
+        path: path.clone(),
+        message,
+    }));
+    Ok((path, message))
 }
 
-/// Makes sure the flyout window runs the subclass; true when it does.
+/// Switches off the target an older build of the DLL may still hold in `ShellHost.exe`.
+fn release_legacy(window: HWND) {
+    send(window, register("JustTheBar.FlyoutPlacement"), CLEAR, 0);
+}
+
+/// Makes sure the flyout window runs this build's subclass; true when it does.
 pub fn attach(window: HWND) -> Result<bool, String> {
-    if send(window, PING, 0) == 1 {
+    let (path, message) = staged()?;
+    if send(window, message, PING, 0) == 1 {
         return Ok(true);
     }
-    let path = staged_dll()?;
+    release_legacy(window);
     let module = unsafe { LoadLibraryW(&HSTRING::from(path.as_os_str())) }
         .map_err(|e| format!("load {}: {e}", path.display()))?;
     let hook_proc: HOOKPROC = unsafe {
@@ -64,21 +82,26 @@ pub fn attach(window: HWND) -> Result<bool, String> {
     let hook =
         unsafe { SetWindowsHookExW(WH_CALLWNDPROC, hook_proc, Some(HINSTANCE(module.0)), thread) }
             .map_err(|e| format!("hook thread {thread}: {e}"))?;
-    send(window, ATTACH, 0);
+    send(window, message, ATTACH, 0);
     let _ = unsafe { UnhookWindowsHookEx(hook) };
-    Ok(send(window, PING, 0) == 1)
+    Ok(send(window, message, PING, 0) == 1)
 }
 
 /// The next time the flyout is positioned, it goes to `x` and, when given, `y`.
 pub fn set_position(window: HWND, x: i32, y: Option<i32>) {
-    let y = y.unwrap_or(i32::MIN);
-    send(
-        window,
-        SET,
-        ((i64::from(y) << 32) | i64::from(x as u32)) as isize,
-    );
+    if let Ok((_, message)) = staged() {
+        let y = y.unwrap_or(i32::MIN);
+        send(
+            window,
+            message,
+            SET,
+            ((i64::from(y) << 32) | i64::from(x as u32)) as isize,
+        );
+    }
 }
 
 pub fn clear(window: HWND) {
-    send(window, CLEAR, 0);
+    if let Ok((_, message)) = staged() {
+        send(window, message, CLEAR, 0);
+    }
 }
