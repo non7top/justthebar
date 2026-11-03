@@ -6,6 +6,7 @@
   ],
   "start": { "enabled": true, "image": "start-button_large.png" },
   "tray": { "enabled": true, "bar": 0 },
+  "clock": { "format": "hh:mm:ss\nDDD, dd MMM" },
   "widgets": ["language", "network", "volume", "battery"],
   "pins": [
     { "name": "Notepad", "path": "C:\\Windows\\notepad.exe" }

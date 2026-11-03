@@ -1,4 +1,5 @@
 pub mod buttons;
+pub mod clock;
 pub mod config;
 pub mod grouping;
 pub mod icon;

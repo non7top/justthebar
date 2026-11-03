@@ -13,9 +13,23 @@ const TRAY_ICON: f32 = 16.0;
 
 /// The clock sits at the far end of the bar. `scale` is dpi / 96.
 pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
+    clock_rect_sized(edge, width, height, scale, default_clock_extent(edge))
+}
+
+/// The clock's length along the bar (pixels at 100% scale) when it shows one short line.
+pub fn default_clock_extent(edge: Edge) -> f32 {
+    if edge.is_horizontal() {
+        CLOCK_LONG
+    } else {
+        CLOCK_SHORT
+    }
+}
+
+/// Like `clock_rect`, with the clock `extent` pixels (at 100% scale) long along the bar.
+pub fn clock_rect_sized(edge: Edge, width: f32, height: f32, scale: f32, extent: f32) -> Rect {
     if edge.is_horizontal() {
         Rect {
-            left: (width - CLOCK_LONG * scale).max(0.0),
+            left: (width - extent * scale).max(0.0),
             top: 0.0,
             right: width,
             bottom: height,
@@ -23,7 +37,7 @@ pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
     } else {
         Rect {
             left: 0.0,
-            top: (height - CLOCK_SHORT * scale).max(0.0),
+            top: (height - extent * scale).max(0.0),
             right: width,
             bottom: height,
         }
@@ -33,7 +47,16 @@ pub fn clock_rect(edge: Edge, width: f32, height: f32, scale: f32) -> Rect {
 /// One rect per task button, laid out from the start of the bar up to the clock. Horizontal bars
 /// put buttons side by side (shrinking them to fit), vertical bars stack them.
 pub fn layout_buttons(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> Vec<Rect> {
-    layout_from(edge, width, height, scale, count, 0.0, 0.0)
+    layout_from(
+        edge,
+        width,
+        height,
+        scale,
+        count,
+        0.0,
+        0.0,
+        default_clock_extent(edge),
+    )
 }
 
 /// Like `layout_buttons`, but with `start_size` (pixels at 100% scale) the first rect is a square
@@ -49,8 +72,35 @@ pub fn layout_rows(
     start_size: Option<f32>,
     reserved: f32,
 ) -> Vec<Rect> {
+    let clock = default_clock_extent(edge);
+    layout_rows_sized(
+        edge, width, height, scale, count, start_size, reserved, clock,
+    )
+}
+
+/// Like `layout_rows`, with the clock `clock_extent` pixels (at 100% scale) long along the bar.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_rows_sized(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    count: usize,
+    start_size: Option<f32>,
+    reserved: f32,
+    clock_extent: f32,
+) -> Vec<Rect> {
     let Some(start_size) = start_size.filter(|_| count > 0) else {
-        return layout_from(edge, width, height, scale, count, 0.0, reserved);
+        return layout_from(
+            edge,
+            width,
+            height,
+            scale,
+            count,
+            0.0,
+            reserved,
+            clock_extent,
+        );
     };
     let pad = PAD * scale;
     let thickness = if edge.is_horizontal() { height } else { width };
@@ -76,11 +126,13 @@ pub fn layout_rows(
         count - 1,
         side + GAP * scale,
         reserved,
+        clock_extent,
     ));
     rects
 }
 
 /// Buttons laid out after `lead` pixels reserved at the start of the bar.
+#[allow(clippy::too_many_arguments)]
 fn layout_from(
     edge: Edge,
     width: f32,
@@ -89,11 +141,12 @@ fn layout_from(
     count: usize,
     lead: f32,
     reserved: f32,
+    clock_extent: f32,
 ) -> Vec<Rect> {
     if count == 0 {
         return Vec::new();
     }
-    let clock = clock_rect(edge, width, height, scale);
+    let clock = clock_rect_sized(edge, width, height, scale, clock_extent);
     let pad = PAD * scale;
     let gap = GAP * scale;
     let n = count as f32;
@@ -153,7 +206,18 @@ pub fn bar_layout(
     start_size: Option<f32>,
     tray: usize,
 ) -> BarLayout {
-    bar_layout_with_widgets(edge, width, height, scale, buttons, start_size, tray, &[])
+    let clock = default_clock_extent(edge);
+    bar_layout_with_widgets(
+        edge,
+        width,
+        height,
+        scale,
+        buttons,
+        start_size,
+        tray,
+        &[],
+        clock,
+    )
 }
 
 /// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar;
@@ -169,9 +233,10 @@ pub fn bar_layout_with_widgets(
     start_size: Option<f32>,
     tray: usize,
     widgets: &[f32],
+    clock_extent: f32,
 ) -> BarLayout {
-    let (mut cells, extent) = tray_cells(edge, width, height, scale, tray);
-    let clock = clock_rect(edge, width, height, scale);
+    let (mut cells, extent) = tray_cells(edge, width, height, scale, tray, clock_extent);
+    let clock = clock_rect_sized(edge, width, height, scale, clock_extent);
     let pad = PAD * scale;
     let gap = GAP * scale;
     let count = widgets.len() as f32;
@@ -216,16 +281,32 @@ pub fn bar_layout_with_widgets(
         }
     }
     BarLayout {
-        rows: layout_rows(edge, width, height, scale, buttons, start_size, reserved),
+        rows: layout_rows_sized(
+            edge,
+            width,
+            height,
+            scale,
+            buttons,
+            start_size,
+            reserved,
+            clock_extent,
+        ),
         tray: cells,
     }
 }
 
-fn tray_cells(edge: Edge, width: f32, height: f32, scale: f32, count: usize) -> (Vec<Rect>, f32) {
+fn tray_cells(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    count: usize,
+    clock_extent: f32,
+) -> (Vec<Rect>, f32) {
     if count == 0 {
         return (Vec::new(), 0.0);
     }
-    let clock = clock_rect(edge, width, height, scale);
+    let clock = clock_rect_sized(edge, width, height, scale, clock_extent);
     let pad = PAD * scale;
     let cell = TRAY_CELL * scale;
     if edge.is_horizontal() {
@@ -439,8 +520,17 @@ mod tests {
 
     #[test]
     fn bar_widgets_sit_before_the_tray_cells_in_order() {
-        let layout =
-            bar_layout_with_widgets(Edge::Bottom, 1920.0, 40.0, 1.0, 3, None, 2, &[50.0, 30.0]);
+        let layout = bar_layout_with_widgets(
+            Edge::Bottom,
+            1920.0,
+            40.0,
+            1.0,
+            3,
+            None,
+            2,
+            &[50.0, 30.0],
+            default_clock_extent(Edge::Bottom),
+        );
         assert_eq!(layout.tray.len(), 4);
         let (first, second) = (layout.tray[2], layout.tray[3]);
         assert_eq!(first.right - first.left, 50.0);
@@ -461,6 +551,7 @@ mod tests {
             None,
             3,
             &[50.0, 50.0, 50.0, 50.0],
+            default_clock_extent(Edge::Right),
         );
         assert_eq!(layout.tray.len(), 7);
         let row = &layout.tray[3..];
