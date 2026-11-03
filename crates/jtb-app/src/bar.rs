@@ -320,6 +320,18 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let (width, height) = client_size(hwnd);
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let time = unsafe { GetLocalTime() };
+    let clock_time = jtb_core::clock::Time {
+        year: time.wYear,
+        month: time.wMonth,
+        weekday: time.wDayOfWeek,
+        day: time.wDay,
+        hour: time.wHour,
+        minute: time.wMinute,
+        second: time.wSecond,
+    };
+    let clock_fmt = crate::clock_format();
+    let clock_lines = jtb_core::clock::render(&clock_fmt, &clock_time);
+    let clock_extent = jtb_core::clock::extent(&clock_fmt, bar.edge().is_horizontal());
     let (hover, dragged_from, blend, pressed, index, tray_hover) = BARS.with_borrow(|bars| {
         bars.iter()
             .find(|b| b.hwnd == hwnd)
@@ -343,7 +355,8 @@ fn paint(hwnd: HWND, bar: AppBar) {
         height as f32,
         scale,
         background_of(hwnd),
-        (time.wHour, time.wMinute),
+        &clock_lines,
+        clock_extent,
         &crate::bar_views(task_monitor_of(hwnd))
             .into_iter()
             .enumerate()
@@ -409,6 +422,7 @@ enum Hit {
     Nothing,
     Button(usize),
     Tray(usize),
+    Clock,
 }
 
 fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
@@ -421,6 +435,8 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
         .iter()
         .map(|w| w.length)
         .collect();
+    let clock_fmt = crate::clock_format();
+    let clock_extent = jtb_core::clock::extent(&clock_fmt, bar.edge().is_horizontal());
     bar_layout_with_widgets(
         bar.edge(),
         width as f32,
@@ -430,7 +446,34 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
         start_art_size(&views),
         tray.len(),
         &lengths,
+        clock_extent,
     )
+}
+
+fn clock_anchor(hwnd: HWND, bar: AppBar) -> Option<jtb_win::flyout::Anchor> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect};
+    flyout_anchor().or_else(|| {
+        let mut bar_rect = RECT::default();
+        unsafe { GetWindowRect(hwnd, &mut bar_rect) }.ok()?;
+        let mut click = POINT::default();
+        unsafe { GetCursorPos(&mut click) }.ok()?;
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        unsafe { GetMonitorInfoW(monitor, &mut info) }.ok().ok()?;
+        Some(jtb_win::flyout::Anchor {
+            window: hwnd,
+            edge: bar.edge(),
+            bar: bar_rect,
+            monitor: info.rcMonitor,
+            click,
+        })
+    })
 }
 
 /// The screen rectangle of the icon drawn in cell `at` of the notification area on the bar with
@@ -486,7 +529,22 @@ fn hit_at(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Hit {
     } else if let Some(at) = hit_test(&layout.rows, x, y) {
         Hit::Button(at)
     } else {
-        Hit::Nothing
+        let (width, height) = client_size(hwnd);
+        let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+        let clock_fmt = crate::clock_format();
+        let clock_extent = jtb_core::clock::extent(&clock_fmt, bar.edge().is_horizontal());
+        let clock = jtb_core::buttons::clock_rect_sized(
+            bar.edge(),
+            width as f32,
+            height as f32,
+            scale,
+            clock_extent,
+        );
+        if x >= clock.left && x <= clock.right && y >= clock.top && y <= clock.bottom {
+            Hit::Clock
+        } else {
+            Hit::Nothing
+        }
     }
 }
 
@@ -662,9 +720,18 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_LBUTTONUP => {
                 let _ = ReleaseCapture();
                 if let Some(bar) = bar {
-                    if let Hit::Tray(at) = hit_at(hwnd, bar, lparam) {
-                        crate::tray_mouse(at, Mouse::Up(Side::Left));
-                        return LRESULT(0);
+                    match hit_at(hwnd, bar, lparam) {
+                        Hit::Tray(at) => {
+                            crate::tray_mouse(at, Mouse::Up(Side::Left));
+                            return LRESULT(0);
+                        }
+                        Hit::Clock => {
+                            if let Some(anchor) = clock_anchor(hwnd, bar) {
+                                jtb_win::calendar::toggle(&anchor);
+                            }
+                            return LRESULT(0);
+                        }
+                        _ => {}
                     }
                     let (press, dragging) = set_press(hwnd, None);
                     if dragging {
@@ -706,7 +773,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         Hit::Button(index) => {
                             crate::context_menu(task_monitor_of(hwnd), index, hwnd);
                         }
-                        Hit::Nothing => crate::bar_menu(hwnd),
+                        Hit::Nothing | Hit::Clock => crate::bar_menu(hwnd),
                     }
                 }
                 LRESULT(0)
@@ -739,7 +806,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                     let (button, tray) = match hit_at(hwnd, bar, lparam) {
                         Hit::Button(at) => (Some(at), None),
                         Hit::Tray(at) => (None, Some(at)),
-                        Hit::Nothing => (None, None),
+                        Hit::Nothing | Hit::Clock => (None, None),
                     };
                     let before = hover_to(hwnd, button, tray);
                     crate::tray_hover_events(before, tray);
