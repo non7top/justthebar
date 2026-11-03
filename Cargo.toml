@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/jtb-core", "crates/jtb-win", "crates/jtb-ui", "crates/jtb-app"]
+members = ["crates/jtb-core", "crates/jtb-win", "crates/jtb-ui", "crates/jtb-app", "crates/jtb-hook"]
 
 [workspace.package]
 version = "0.1.0"

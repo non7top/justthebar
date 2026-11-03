@@ -1261,6 +1261,9 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     if let Some(line) = jtb_win::flyout::tick() {
                         log(&line);
                     }
+                    for line in jtb_win::flyout::take_lines() {
+                        log(&line);
+                    }
                     if let Some(line) = jtb_win::langmenu::tick() {
                         log(&line);
                     }

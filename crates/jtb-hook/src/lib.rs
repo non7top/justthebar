@@ -1,0 +1,107 @@
+//! Loaded into `ShellHost.exe` by `jtb-app` to place the quick settings flyout before it is shown.
+//!
+//! The app installs `jtb_hook_proc` as a one-shot WH_CALLWNDPROC hook on the flyout's thread and
+//! sends the attach command (1); the hook subclasses the window and the app removes the hook again.
+//! From then on the app talks to the subclass directly with the same registered message: 2 sets
+//! the position (x in the low 32 bits of lparam, y in the high 32), 3 clears it, and any command
+//! is answered with 1, so the app can tell the subclass is there.
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
+
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::{
+    GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+};
+use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, GetClassNameW, RegisterWindowMessageW, CWPSTRUCT, SWP_NOMOVE, WINDOWPOS,
+    WM_NCDESTROY, WM_WINDOWPOSCHANGING,
+};
+
+const ATTACH: usize = 1;
+const SET: usize = 2;
+const CLEAR: usize = 3;
+const SUBCLASS_ID: usize = 0x4A54_4231;
+
+static MESSAGE: AtomicU32 = AtomicU32::new(0);
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+static X: AtomicI32 = AtomicI32::new(0);
+static Y: AtomicI32 = AtomicI32::new(0);
+
+fn message() -> u32 {
+    let known = MESSAGE.load(Ordering::Relaxed);
+    if known != 0 {
+        return known;
+    }
+    let id = unsafe { RegisterWindowMessageW(w!("JustTheBar.FlyoutPlacement")) };
+    MESSAGE.store(id, Ordering::Relaxed);
+    id
+}
+
+fn is_flyout(window: HWND) -> bool {
+    let mut class = [0u16; 32];
+    let len = unsafe { GetClassNameW(window, &mut class) };
+    len > 0 && String::from_utf16_lossy(&class[..len as usize]) == "ControlCenterWindow"
+}
+
+unsafe extern "system" fn subclass(
+    window: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == message() {
+        match wparam.0 {
+            SET => {
+                X.store(lparam.0 as i32, Ordering::Relaxed);
+                Y.store((lparam.0 >> 32) as i32, Ordering::Relaxed);
+                ACTIVE.store(true, Ordering::Release);
+            }
+            CLEAR => ACTIVE.store(false, Ordering::Release),
+            _ => {}
+        }
+        return LRESULT(1);
+    }
+    if msg == WM_WINDOWPOSCHANGING && ACTIVE.load(Ordering::Acquire) && lparam.0 != 0 {
+        let pos = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
+        if pos.flags.0 & SWP_NOMOVE.0 == 0 {
+            pos.x = X.load(Ordering::Relaxed);
+            pos.y = Y.load(Ordering::Relaxed);
+        }
+    }
+    if msg == WM_NCDESTROY {
+        let _ = unsafe { RemoveWindowSubclass(window, Some(subclass), SUBCLASS_ID) };
+    }
+    unsafe { DefSubclassProc(window, msg, wparam, lparam) }
+}
+
+fn attach(window: HWND) {
+    if !is_flyout(window) {
+        return;
+    }
+    // The subclass procedure lives in this DLL, so it must stay loaded after the hook is removed.
+    let mut pinned = HMODULE::default();
+    let _ = unsafe {
+        GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            PCWSTR(&MESSAGE as *const AtomicU32 as *const u16),
+            &mut pinned,
+        )
+    };
+    let _ = unsafe { SetWindowSubclass(window, Some(subclass), SUBCLASS_ID, 0) };
+}
+
+/// # Safety
+/// Called by Windows as a WH_CALLWNDPROC hook; `lparam` points to a `CWPSTRUCT` when `code` is 0.
+#[no_mangle]
+pub unsafe extern "system" fn jtb_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == 0 && lparam.0 != 0 {
+        let call = unsafe { &*(lparam.0 as *const CWPSTRUCT) };
+        if call.message == message() && call.wParam.0 == ATTACH {
+            attach(call.hwnd);
+        }
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}

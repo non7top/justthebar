@@ -49,9 +49,11 @@ jobs:
       - name: Build
         run: cargo build --release --target "$TARGET"
 
-      - name: Upload exe
+      - name: Upload exe and hook DLL
         uses: actions/upload-artifact@v5
         with:
           name: jtb-app
-          path: target/x86_64-pc-windows-gnu/release/jtb-app.exe
+          path: |
+            target/x86_64-pc-windows-gnu/release/jtb-app.exe
+            target/x86_64-pc-windows-gnu/release/jtb_hook.dll
           if-no-files-found: error

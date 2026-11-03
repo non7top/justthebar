@@ -4,6 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 use jtb_core::Edge;
+
+use crate::hookdll;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{
@@ -38,6 +40,56 @@ thread_local! {
     static LOGGED: Cell<bool> = const { Cell::new(false) };
     static LAST_OPEN: Cell<Option<Instant>> = const { Cell::new(None) };
     static CLOSING: Cell<Option<Instant>> = const { Cell::new(None) };
+    static LINES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static HOOK_STATE: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// Lines for the log queued by `expect` and `leave_alone`.
+pub fn take_lines() -> Vec<String> {
+    LINES.take()
+}
+
+fn all_flyouts() -> Vec<HWND> {
+    let mut found = Vec::new();
+    let mut after: Option<HWND> = None;
+    while let Ok(window) =
+        unsafe { FindWindowExW(None, after, w!("ControlCenterWindow"), PCWSTR::null()) }
+    {
+        after = Some(window);
+        found.push(window);
+    }
+    found
+}
+
+/// Tells the code inside `ShellHost.exe` where the flyout goes, so it is placed before it is
+/// shown. Logs the first outcome and each change of it.
+fn aim_hook(anchor: &Anchor) {
+    for window in all_flyouts() {
+        let state = match hookdll::attach(window) {
+            Ok(true) => {
+                let mut rect = RECT::default();
+                if unsafe { GetWindowRect(window, &mut rect) }.is_ok() {
+                    let (x, y) = target_for(anchor, window, &rect);
+                    hookdll::set_position(window, x, y);
+                }
+                "placing the flyout from inside ShellHost".to_string()
+            }
+            Ok(false) => "hook loaded but the flyout window did not take it".to_string(),
+            Err(error) => format!("hook unavailable ({error}), moving the flyout from outside"),
+        };
+        HOOK_STATE.with_borrow_mut(|last| {
+            if *last != state {
+                LINES.with_borrow_mut(|lines| lines.push(format!("flyout: {state}")));
+                *last = state;
+            }
+        });
+    }
+}
+
+fn release_hook() {
+    for window in all_flyouts() {
+        hookdll::clear(window);
+    }
 }
 
 /// True when the flyout closed a moment ago: a click on the bar takes focus and dismisses it, so a
@@ -58,6 +110,7 @@ pub fn is_open() -> bool {
 pub fn leave_alone() {
     PENDING.set(None);
     CLOSING.set(Some(Instant::now()));
+    release_hook();
 }
 
 /// The flyout's state at a click, for the log.
@@ -71,6 +124,7 @@ pub fn describe() -> String {
 
 /// A flyout is about to open next to `anchor`.
 pub fn expect(anchor: Anchor) {
+    aim_hook(&anchor);
     PENDING.set(Some(Pending {
         anchor,
         since: Instant::now(),
@@ -104,6 +158,12 @@ fn visible_flyout() -> Option<HWND> {
         }
     }
     None
+}
+
+fn target_for(anchor: &Anchor, window: HWND, rect: &RECT) -> (i32, i32) {
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    let margin = 12 * unsafe { GetDpiForWindow(window) } as i32 / 96;
+    target(anchor, width, height, margin)
 }
 
 fn target(anchor: &Anchor, width: i32, height: i32, margin: i32) -> (i32, i32) {
@@ -148,6 +208,7 @@ pub fn tick() -> Option<String> {
         let waited = since.elapsed();
         if (seen && waited > Duration::from_millis(500)) || waited > Duration::from_secs(3) {
             PENDING.set(None);
+            release_hook();
             if !seen && !LOGGED.replace(true) {
                 return Some("flyout: no visible ControlCenterWindow after Win+A".to_string());
             }
@@ -161,9 +222,7 @@ pub fn tick() -> Option<String> {
     };
     let mut rect = RECT::default();
     unsafe { GetWindowRect(window, &mut rect) }.ok()?;
-    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-    let margin = 12 * unsafe { GetDpiForWindow(window) } as i32 / 96;
-    let (x, y) = target(&anchor, width, height, margin);
+    let (x, y) = target_for(&anchor, window, &rect);
     let first = PENDING.with_borrow_mut(|p| {
         p.as_mut().is_some_and(|p| {
             let first = !p.seen;
