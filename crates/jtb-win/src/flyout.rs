@@ -105,7 +105,8 @@ fn aim_hook(anchor: &Anchor) {
     }
 }
 
-fn release_hook() {
+/// Switches off the target held inside `ShellHost.exe`; call on exit so a later Win+A is not moved.
+pub fn release_hook() {
     for window in all_flyouts() {
         hookdll::clear(window);
     }

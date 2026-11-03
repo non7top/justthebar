@@ -1135,6 +1135,7 @@ fn on_shell_hook(code: usize, id: isize) {
 
 /// Removes all appbars and ends the message loop.
 pub fn quit() {
+    jtb_win::flyout::release_hook();
     bar::destroy_all();
     unsafe { PostQuitMessage(0) };
 }
