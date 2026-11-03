@@ -520,6 +520,10 @@ pub(crate) fn clock_format() -> String {
     current_config().clock.format
 }
 
+pub(crate) fn clock_months() -> u32 {
+    current_config().clock.months
+}
+
 fn state_file() -> Option<PathBuf> {
     exe_sibling("jtb.state.json")
 }

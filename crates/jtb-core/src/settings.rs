@@ -171,6 +171,12 @@ pub const SCHEMA: &[OptionSpec] = &[
         default: "%H:%M",
     },
     OptionSpec {
+        path: "clock.months",
+        kind: Kind::Int { min: 1, max: 12 },
+        description: "Number of calendar months to display stacked vertically in the popup.",
+        default: "3",
+    },
+    OptionSpec {
         path: "widgets",
         kind: Kind::List,
         description: "Widgets in order: battery, language, network, volume. Add :tray to a name to put it in the notification area.",

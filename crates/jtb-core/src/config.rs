@@ -273,12 +273,14 @@ impl MouseConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ClockConfig {
     pub format: String,
+    pub months: u32,
 }
 
 impl Default for ClockConfig {
     fn default() -> Self {
         ClockConfig {
             format: crate::clock::DEFAULT_FORMAT.to_string(),
+            months: 3,
         }
     }
 }
