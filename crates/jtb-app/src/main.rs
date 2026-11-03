@@ -516,6 +516,10 @@ fn current_config() -> Config {
     STATE.with_borrow(|s| s.as_ref().map(|s| s.config.clone()).unwrap_or_default())
 }
 
+pub(crate) fn clock_format() -> String {
+    current_config().clock.format
+}
+
 fn state_file() -> Option<PathBuf> {
     exe_sibling("jtb.state.json")
 }

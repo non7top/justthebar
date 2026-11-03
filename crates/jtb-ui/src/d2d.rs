@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 
+use jtb_core::clock::Align;
 use jtb_core::icon::downscale;
 use jtb_core::scene::{Color, IconDraw, Scene};
 use windows::core::{w, Result};
@@ -18,8 +19,8 @@ use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
     DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
     DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
-    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
-    DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TRIMMING,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 
@@ -81,7 +82,7 @@ fn rect(r: jtb_core::scene::Rect) -> D2D_RECT_F {
 
 impl D2dRenderer {
     /// Single-line text that ends in an ellipsis when it does not fit.
-    fn text_format(&self, font_px: f32, leading: bool) -> Result<IDWriteTextFormat> {
+    fn text_format(&self, font_px: f32, align: Align) -> Result<IDWriteTextFormat> {
         unsafe {
             let format = self.text.CreateTextFormat(
                 w!("Segoe UI"),
@@ -92,11 +93,12 @@ impl D2dRenderer {
                 font_px,
                 w!("en-us"),
             )?;
-            format.SetTextAlignment(if leading {
-                DWRITE_TEXT_ALIGNMENT_LEADING
-            } else {
-                DWRITE_TEXT_ALIGNMENT_CENTER
-            })?;
+            let text_align = match align {
+                Align::Left => DWRITE_TEXT_ALIGNMENT_LEADING,
+                Align::Center => DWRITE_TEXT_ALIGNMENT_CENTER,
+                Align::Right => DWRITE_TEXT_ALIGNMENT_TRAILING,
+            };
+            format.SetTextAlignment(text_align)?;
             format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
             format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
             let sign = self.text.CreateEllipsisTrimmingSign(&format)?;
@@ -179,8 +181,9 @@ impl Renderer for D2dRenderer {
     fn draw(&mut self, scene: &Scene) -> Result<()> {
         self.sync_bitmaps(scene)?;
         unsafe {
-            let centered = self.text_format(scene.font_px, false)?;
-            let leading = self.text_format(scene.font_px, true)?;
+            let left = self.text_format(scene.font_px, Align::Left)?;
+            let center = self.text_format(scene.font_px, Align::Center)?;
+            let right = self.text_format(scene.font_px, Align::Right)?;
 
             self.target.BeginDraw();
             self.target.Clear(Some(&color(scene.background)));
@@ -206,9 +209,14 @@ impl Renderer for D2dRenderer {
                     .target
                     .CreateSolidColorBrush(&color(label.color), None)?;
                 let wide: Vec<u16> = label.text.encode_utf16().collect();
+                let fmt = match label.align {
+                    Align::Left => &left,
+                    Align::Center => &center,
+                    Align::Right => &right,
+                };
                 self.target.DrawText(
                     &wide,
-                    if label.leading { &leading } else { &centered },
+                    fmt,
                     &rect(label.rect),
                     &brush,
                     D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,

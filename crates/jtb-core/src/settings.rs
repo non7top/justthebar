@@ -165,6 +165,12 @@ pub const SCHEMA: &[OptionSpec] = &[
         default: "0",
     },
     OptionSpec {
+        path: "clock.format",
+        kind: Kind::Text,
+        description: "Clock format string (e.g. 'hh:mm:ss\\nDDD, dd MMM' or '%H:%M:%S\\n%a, %d %b').",
+        default: "%H:%M",
+    },
+    OptionSpec {
         path: "widgets",
         kind: Kind::List,
         description: "Widgets in order: battery, language, network, volume. Add :tray to a name to put it in the notification area.",

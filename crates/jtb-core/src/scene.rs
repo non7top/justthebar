@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use crate::buttons::{
-    bar_layout_with_widgets, clock_rect, icon_rect, stripe_split, title_left, tray_icon_rect,
+    bar_layout_with_widgets, clock_rect_sized, default_clock_extent, icon_rect, stripe_split,
+    title_left, tray_icon_rect,
 };
+use crate::clock::{self, Align, Line, Time};
 use crate::icon::Icon;
 use crate::Edge;
 
@@ -46,8 +48,8 @@ pub struct Label {
     pub rect: Rect,
     pub text: String,
     pub color: Color,
-    /// Left-aligned (task buttons) instead of centered (clock).
-    pub leading: bool,
+    /// Left for task buttons; the clock lines each choose their own.
+    pub align: Align,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -197,10 +199,6 @@ pub fn start_art_size(buttons: &[ButtonView]) -> Option<f32> {
     start.frames.as_ref().map(|_| start.size)
 }
 
-pub fn clock_text(hour: u16, minute: u16) -> String {
-    format!("{hour:02}:{minute:02}")
-}
-
 /// Lays out a bar of `width` x `height` pixels; `scale` is dpi / 96.
 #[allow(clippy::too_many_arguments)]
 pub fn build_scene(
@@ -209,24 +207,27 @@ pub fn build_scene(
     height: f32,
     scale: f32,
     background: Color,
-    time: (u16, u16),
+    (hour, minute): (u16, u16),
     buttons: &[ButtonView],
     tray: &[TrayView],
 ) -> Scene {
+    let lines = clock::render(clock::DEFAULT_FORMAT, &Time::hm(hour, minute));
     build_scene_with_widgets(
         edge,
         width,
         height,
         scale,
         background,
-        time,
+        &lines,
+        default_clock_extent(edge),
         buttons,
         tray,
         &[],
     )
 }
 
-/// Like `build_scene`, with widgets on the bar itself, just before the tray cells.
+/// Like `build_scene`, with widgets on the bar itself, just before the tray cells, and the clock
+/// as `clock` lines taking `clock_extent` pixels (at 100% scale) along the bar.
 #[allow(clippy::too_many_arguments)]
 pub fn build_scene_with_widgets(
     edge: Edge,
@@ -234,7 +235,8 @@ pub fn build_scene_with_widgets(
     height: f32,
     scale: f32,
     background: Color,
-    (hour, minute): (u16, u16),
+    clock: &[Line],
+    clock_extent: f32,
     buttons: &[ButtonView],
     tray: &[TrayView],
     widgets: &[WidgetView],
@@ -242,12 +244,22 @@ pub fn build_scene_with_widgets(
     let white = Color::rgb(1.0, 1.0, 1.0);
     let mut fills = Vec::new();
     let mut icons = Vec::new();
-    let mut labels = vec![Label {
-        rect: clock_rect(edge, width, height, scale),
-        text: clock_text(hour, minute),
-        color: white,
-        leading: false,
-    }];
+    let clock_box = clock_rect_sized(edge, width, height, scale, clock_extent);
+    let row = (clock_box.bottom - clock_box.top) / clock.len().max(1) as f32;
+    let mut labels: Vec<Label> = clock
+        .iter()
+        .enumerate()
+        .map(|(i, line)| Label {
+            rect: Rect {
+                top: clock_box.top + i as f32 * row,
+                bottom: clock_box.top + (i + 1) as f32 * row,
+                ..clock_box
+            },
+            text: line.text.clone(),
+            color: white,
+            align: line.align,
+        })
+        .collect();
     let lengths: Vec<f32> = widgets.iter().map(|w| w.length).collect();
     let layout = bar_layout_with_widgets(
         edge,
@@ -258,6 +270,7 @@ pub fn build_scene_with_widgets(
         start_art_size(buttons),
         tray.len(),
         &lengths,
+        clock_extent,
     );
     for (cell, view) in layout.tray.iter().zip(tray) {
         if view.hovered {
@@ -308,7 +321,7 @@ pub fn build_scene_with_widgets(
                 rect: text,
                 text: view.label.clone(),
                 color: white,
-                leading: !centered,
+                align: if centered { Align::Center } else { Align::Left },
             });
         }
     }
@@ -451,7 +464,7 @@ pub fn build_scene_with_widgets(
                 a: opacity,
                 ..white
             },
-            leading: true,
+            align: Align::Left,
         });
     }
     Scene {
@@ -478,8 +491,10 @@ mod tests {
 
     #[test]
     fn clock_is_zero_padded() {
-        assert_eq!(clock_text(7, 5), "07:05");
-        assert_eq!(clock_text(23, 59), "23:59");
+        let t1 = clock::render(clock::DEFAULT_FORMAT, &Time::hm(7, 5));
+        let t2 = clock::render(clock::DEFAULT_FORMAT, &Time::hm(23, 59));
+        assert_eq!(t1[0].text, "07:05");
+        assert_eq!(t2[0].text, "23:59");
     }
 
     #[test]
@@ -797,7 +812,7 @@ mod tests {
         let flashing = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[flash], &[]);
         assert!(flashing.fills[0].color.r > flashing.fills[0].color.b);
         assert_eq!(flashing.fills.len(), 2);
-        assert!(scene.labels[1].leading);
-        assert!(!scene.labels[0].leading);
+        assert_eq!(scene.labels[1].align, Align::Left);
+        assert_eq!(scene.labels[0].align, Align::Center);
     }
 }

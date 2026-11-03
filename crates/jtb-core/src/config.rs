@@ -269,6 +269,20 @@ impl MouseConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClockConfig {
+    pub format: String,
+}
+
+impl Default for ClockConfig {
+    fn default() -> Self {
+        ClockConfig {
+            format: crate::clock::DEFAULT_FORMAT.to_string(),
+        }
+    }
+}
+
 /// The only config file version this build understands.
 pub const CONFIG_VERSION: u32 = 1;
 
@@ -284,6 +298,7 @@ pub struct Config {
     pub mouse: MouseConfig,
     pub start: StartConfig,
     pub tray: TrayConfig,
+    pub clock: ClockConfig,
     /// Built-in widgets (`battery`, `language`, ...) shown in the notification area of the tray
     /// bar, left to right, next to the clock.
     pub widgets: Vec<WidgetConfig>,
@@ -303,6 +318,7 @@ impl Default for Config {
             mouse: MouseConfig::default(),
             start: StartConfig::default(),
             tray: TrayConfig::default(),
+            clock: ClockConfig::default(),
             widgets: Vec::new(),
             pins: Vec::new(),
             groups: Vec::new(),
