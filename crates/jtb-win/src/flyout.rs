@@ -75,6 +75,21 @@ fn aim_hook(anchor: &Anchor) {
                     let side = matches!(anchor.edge, Edge::Left | Edge::Right);
                     hookdll::set_position(window, x, (!side).then_some(y));
                     HOOKED.set(true);
+                    if !unsafe { IsWindowVisible(window) }.as_bool() {
+                        // On the first open the shell shows the window where it was parked
+                        // without moving it, so there is nothing for the hook to rewrite.
+                        let _ = unsafe {
+                            SetWindowPos(
+                                window,
+                                None,
+                                rect.left,
+                                rect.top,
+                                0,
+                                0,
+                                SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
+                            )
+                        };
+                    }
                 }
                 "placing the flyout from inside ShellHost".to_string()
             }
