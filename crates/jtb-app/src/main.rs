@@ -22,7 +22,7 @@ use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons, TrayKey};
 use jtb_core::traypacket;
 use jtb_core::Edge;
 use jtb_win::{explorer, menuhost, monitors, shell, startmenu, stockmenu, tasks, tray};
-use windows::core::{w, Result};
+use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -30,9 +30,9 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetCursorPos, GetMessageW, KillTimer,
-    PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, MSG, WM_DISPLAYCHANGE, WM_TIMER,
-    WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW,
+    KillTimer, PostMessageW, PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, MSG,
+    WM_DISPLAYCHANGE, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 const TIMER_HIDE_EXPLORER: usize = 1;
@@ -41,6 +41,9 @@ const TIMER_CLOCK: usize = 3;
 const TIMER_WIDGETS: usize = 9;
 const TIMER_CONFIG: usize = 4;
 const TIMER_ZORDER: usize = 7;
+
+const WM_APP_RESTART: u32 = 0x8001;
+const WM_APP_QUIT: u32 = 0x8002;
 
 struct State {
     config: Config,
@@ -73,6 +76,8 @@ thread_local! {
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
+    static STARTUP_ARGS: RefCell<Vec<std::ffi::OsString>> = const { RefCell::new(Vec::new()) };
+    static RESTARTING: Cell<bool> = const { Cell::new(false) };
 }
 
 fn exe_sibling(name: &str) -> Option<PathBuf> {
@@ -105,6 +110,8 @@ struct Args {
     hide_explorer: bool,
     restore_explorer: bool,
     quit_after_secs: Option<u32>,
+    restart: bool,
+    quit: bool,
 }
 
 impl Args {
@@ -114,10 +121,14 @@ impl Args {
             hide_explorer: false,
             restore_explorer: false,
             quit_after_secs: None,
+            restart: false,
+            quit: false,
         };
         let mut iter = std::env::args().skip(1);
         while let Some(arg) = iter.next() {
             match arg.as_str() {
+                "--restart" => args.restart = true,
+                "--quit" => args.quit = true,
                 "--hide-explorer" => args.hide_explorer = true,
                 "--restore-explorer" => args.restore_explorer = true,
                 "--edge" => args.edge = iter.next().and_then(|v| Edge::parse(&v)),
@@ -137,6 +148,9 @@ struct ExplorerGuard;
 impl Drop for ExplorerGuard {
     fn drop(&mut self) {
         menuhost::close();
+        if RESTARTING.get() {
+            return;
+        }
         if EXPLORER_HIDDEN.get() {
             let state = explorer::restore();
             log(&format!("explorer restored, state={state}"));
@@ -1184,18 +1198,59 @@ fn config_file() -> Option<PathBuf> {
 
 /// Right click on empty bar space.
 pub fn bar_menu(hwnd: HWND) {
-    match shell::popup_menu(hwnd, &[("Advanced options...", true), ("Quit", true)]) {
+    match shell::popup_menu(
+        hwnd,
+        &[
+            ("Advanced options...", true),
+            ("Restart", true),
+            ("Quit", true),
+        ],
+    ) {
         Some(0) => match config_file() {
             Some(path) => settings::open(path),
             None => log("settings: the layout came from the command line, there is no config file"),
         },
-        Some(1) => quit(),
+        Some(1) => restart(),
+        Some(2) => quit(),
         _ => {}
+    }
+}
+
+/// Signals the running app to restart, by spawning a new instance and ending this message loop.
+pub fn restart() {
+    let Ok(exe) = std::env::current_exe() else {
+        log("restart: could not determine current_exe");
+        return;
+    };
+    let args: Vec<std::ffi::OsString> = STARTUP_ARGS.with_borrow(|a| a.clone());
+    log(&format!("restart: launching {:?} with {:?}", exe, args));
+
+    RESTARTING.set(true);
+    menuhost::close();
+    jtb_win::flyout::release_hook();
+    bar::destroy_all();
+    if tray::give_back(false) {
+        log("tray: role given back before restart");
+    }
+
+    match std::process::Command::new(&exe).args(&args).spawn() {
+        Ok(_) => {
+            log("restart: new instance launched, exiting");
+            unsafe { PostQuitMessage(0) };
+        }
+        Err(e) => {
+            log(&format!("restart: failed to launch new instance: {e}"));
+            RESTARTING.set(false);
+            if let Some((config, force)) = current_settings() {
+                apply(&config, force);
+            }
+        }
     }
 }
 
 /// Removes all appbars and ends the message loop.
 pub fn quit() {
+    menuhost::close();
     jtb_win::flyout::release_hook();
     bar::destroy_all();
     unsafe { PostQuitMessage(0) };
@@ -1203,7 +1258,41 @@ pub fn quit() {
 
 fn main() -> Result<()> {
     std::panic::set_hook(Box::new(|info| log(&format!("panic: {info}"))));
+    let startup_args: Vec<std::ffi::OsString> = std::env::args_os()
+        .skip(1)
+        .filter(|a| a != "--restart" && a != "--quit")
+        .collect();
+    STARTUP_ARGS.with_borrow_mut(|a| *a = startup_args);
+
     let args = Args::parse();
+    if args.restart {
+        unsafe {
+            if let Ok(hwnd) = FindWindowW(w!("JustTheBarControl"), PCWSTR::null()) {
+                if !hwnd.0.is_null() {
+                    log("restart: signaling running JustTheBar to restart");
+                    let _ = PostMessageW(Some(hwnd), WM_APP_RESTART, WPARAM(0), LPARAM(0));
+                    println!("Signaled running JustTheBar to restart.");
+                    return Ok(());
+                }
+            }
+        }
+        println!("JustTheBar is not currently running. Starting a new instance...");
+    }
+    if args.quit {
+        unsafe {
+            if let Ok(hwnd) = FindWindowW(w!("JustTheBarControl"), PCWSTR::null()) {
+                if !hwnd.0.is_null() {
+                    log("quit: signaling running JustTheBar to quit");
+                    let _ = PostMessageW(Some(hwnd), WM_APP_QUIT, WPARAM(0), LPARAM(0));
+                    println!("Signaled running JustTheBar to quit.");
+                    return Ok(());
+                }
+            }
+        }
+        println!("JustTheBar is not running.");
+        return Ok(());
+    }
+
     log(&format!(
         "start quit_after={:?} restore={}",
         args.quit_after_secs, args.restore_explorer
@@ -1356,6 +1445,16 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             if let Some((config, force)) = current_settings() {
                 apply(&config, force);
             }
+            LRESULT(0)
+        }
+        WM_APP_RESTART => {
+            log("control: restart message received");
+            restart();
+            LRESULT(0)
+        }
+        WM_APP_QUIT => {
+            log("control: quit message received");
+            quit();
             LRESULT(0)
         }
         _ if msg != 0 && msg == SHELLHOOK_MESSAGE.get() => {

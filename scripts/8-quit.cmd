@@ -1,0 +1,3 @@
+@echo off
+echo Signaling running JustTheBar to quit...
+"%~dp0jtb-app.exe" --quit
