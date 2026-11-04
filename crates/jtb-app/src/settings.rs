@@ -490,7 +490,7 @@ unsafe extern "system" fn wnd_proc(
 }
 
 /// A small modal window with one edit field. Returns the text on OK, none on cancel.
-fn input_box(owner: HWND, prompt: &str, initial: &str) -> Option<String> {
+pub fn input_box(owner: HWND, prompt: &str, initial: &str) -> Option<String> {
     unsafe {
         let instance = GetModuleHandleW(None).ok()?;
         let class = WNDCLASSW {

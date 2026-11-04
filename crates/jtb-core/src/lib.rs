@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod buttons;
 pub mod clock;
 pub mod config;

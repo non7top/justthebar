@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use jtb_core::activity::{self, ActivityState, NotificationRule};
 use jtb_core::config::PinConfig;
 use jtb_core::config::{Action, Button, Config, StartConfig, StartMenu, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
@@ -78,6 +79,8 @@ thread_local! {
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
     static STARTUP_ARGS: RefCell<Vec<std::ffi::OsString>> = const { RefCell::new(Vec::new()) };
     static RESTARTING: Cell<bool> = const { Cell::new(false) };
+    static BLINK_PHASE: Cell<bool> = const { Cell::new(false) };
+    static BLINK_COUNTER: Cell<u8> = const { Cell::new(0) };
 }
 
 fn exe_sibling(name: &str) -> Option<PathBuf> {
@@ -641,6 +644,8 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
         minimized: false,
         flashing: false,
         title_changed: false,
+        status_changed: false,
+        activity: ActivityState::default(),
         child: false,
         header: false,
         drag: Drag::None,
@@ -831,6 +836,7 @@ fn build_bar(
             .cloned()
             .collect();
         let icon_of = |id: isize| ICONS.with_borrow(|icons| icons.get(&id).cloned().flatten());
+        let blink_dimmed = BLINK_PHASE.get();
         let rows = build_rows(
             &visible,
             pins,
@@ -846,14 +852,17 @@ fn build_bar(
                         id,
                         title: String::new(),
                         exe: String::new(),
+                        activity: ActivityState::default(),
                     });
                     let view = ButtonView {
                         title: task.title.clone(),
                         active: tasks.active() == Some(id),
                         hovered: false,
                         minimized: tasks::is_minimized(id),
-                        flashing: tasks.is_flashing(id),
+                        flashing: tasks.is_flashing(id) && !blink_dimmed,
                         title_changed: tasks.has_new_title(id),
+                        status_changed: tasks.has_status_changed(id),
+                        activity: tasks.activity_state(id),
                         child,
                         header: false,
                         drag: Drag::None,
@@ -882,8 +891,14 @@ fn build_bar(
                         active,
                         hovered: false,
                         minimized: windows.iter().all(|id| tasks::is_minimized(*id)),
-                        flashing: windows.iter().any(|id| tasks.is_flashing(*id)),
+                        flashing: windows.iter().any(|id| tasks.is_flashing(*id)) && !blink_dimmed,
                         title_changed: !active && windows.iter().any(|id| tasks.has_new_title(*id)),
+                        status_changed: !active
+                            && windows.iter().any(|id| tasks.has_status_changed(*id)),
+                        activity: windows
+                            .first()
+                            .map(|id| tasks.activity_state(*id))
+                            .unwrap_or_default(),
                         child: false,
                         header: true,
                         drag: Drag::None,
@@ -1079,7 +1094,11 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
     match &click {
         Click::Window { id, .. } => {
             let exe = exe_of(*id);
-            let items = [("Pin this app", !exe.is_empty()), ("Close window", true)];
+            let items = [
+                ("Pin this app", !exe.is_empty()),
+                ("Create notification rule...", true),
+                ("Close window", true),
+            ];
             match shell::popup_menu(hwnd, &items) {
                 Some(0) => {
                     if pin_program(&exe, Vec::new()) {
@@ -1087,7 +1106,10 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                         bar::invalidate_all();
                     }
                 }
-                Some(1) => tasks::close(*id),
+                Some(1) => {
+                    create_notification_rule(hwnd, *id, &exe);
+                }
+                Some(2) => tasks::close(*id),
                 _ => {}
             }
         }
@@ -1154,7 +1176,42 @@ fn fill_exe(list: &mut Tasks, id: isize) {
     }
 }
 
+fn effective_rules(config: &Config) -> Vec<NotificationRule> {
+    UI_STATE.with_borrow(|s| s.effective_rules(&config.activity.rules))
+}
+
+fn create_notification_rule(owner: HWND, id: isize, exe: &str) {
+    let exe_name = std::path::Path::new(exe)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(if exe.is_empty() { "*" } else { exe });
+    let title = TASKS.with_borrow(|list| list.get(id).map(|t| t.title.clone()).unwrap_or_default());
+    let prompt_text = format!("Rule for {exe_name} ([filter] prompt [| working [| idle]]):");
+    let initial = r"waiting for input|\[y/n\]|\?|approve";
+    if let Some(input) = settings::input_box(owner, &prompt_text, initial) {
+        if let Some(rule) = activity::parse_rule_input(exe_name, &input) {
+            log(&format!("created notification rule: {rule:?}"));
+            UI_STATE.with_borrow_mut(|s| s.add_rule(rule));
+            save_state();
+            let config = current_config();
+            let rules = effective_rules(&config);
+            TASKS.with_borrow_mut(|list| {
+                if let Some(state) = activity::classify_title(&rules, exe, &title) {
+                    list.set_activity_state(id, state);
+                    if state == ActivityState::Prompt {
+                        list.set_flashing(id, true);
+                    }
+                }
+            });
+            bar::invalidate_all();
+        }
+    }
+}
+
 fn on_shell_hook(code: usize, id: isize) {
+    let config = current_config();
+    let rules = effective_rules(&config);
+
     TASKS.with_borrow_mut(|list| match code {
         tasks::HSHELL_FLASH => {
             if tasks::is_taskbar_window(id) {
@@ -1164,10 +1221,42 @@ fn on_shell_hook(code: usize, id: isize) {
             }
         }
         tasks::HSHELL_WINDOWCREATED | tasks::HSHELL_REDRAW => {
-            list.set_flashing(id, false);
             if tasks::is_taskbar_window(id) {
-                list.upsert(id, tasks::title(id));
+                let old_task = list.get(id).cloned();
+                let old_title = old_task.as_ref().map(|t| t.title.clone()).unwrap_or_default();
+                let old_state = old_task.as_ref().map(|t| t.activity).unwrap_or_default();
+                let new_title = tasks::title(id);
                 fill_exe(list, id);
+                let exe = list.get(id).map(|t| t.exe.clone()).unwrap_or_default();
+
+                if config.activity.record_title_changes && old_title != new_title && !old_title.is_empty() {
+                    log(&format!("title_change: id={id} exe={exe:?} old={old_title:?} new={new_title:?}"));
+                }
+
+                if config.activity.enabled {
+                    if let Some(new_state) = activity::classify_title(&rules, &exe, &new_title) {
+                        if config.activity.record_title_changes && old_state != new_state {
+                            log(&format!("activity: id={id} state={new_state:?} (was {old_state:?})"));
+                        }
+                        if old_state == ActivityState::Working && new_state == ActivityState::Idle {
+                            log(&format!("activity: window {id} ({exe:?}) transitioned Working -> Idle (status change raised)"));
+                            list.set_status_changed(id, true);
+                        }
+                        if new_state == ActivityState::Prompt {
+                            log(&format!("activity: window {id} ({exe:?}) entered Prompt (triggering blink)"));
+                            list.set_flashing(id, true);
+                        } else if list.is_flashing(id) && new_state != ActivityState::Prompt && code == tasks::HSHELL_REDRAW {
+                            list.set_flashing(id, false);
+                        }
+                        list.set_activity_state(id, new_state);
+                    } else if code == tasks::HSHELL_REDRAW {
+                        list.set_flashing(id, false);
+                    }
+                } else if code == tasks::HSHELL_REDRAW {
+                    list.set_flashing(id, false);
+                }
+
+                list.upsert(id, new_title);
             } else {
                 list.remove(id);
             }
@@ -1408,6 +1497,18 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 TIMER_WIDGETS => {
                     if widgets::refresh_quick() {
                         bar::invalidate_all();
+                    }
+                    BLINK_COUNTER.set((BLINK_COUNTER.get() + 1) % 5);
+                    if BLINK_COUNTER.get() == 0 {
+                        let has_flashing = TASKS
+                            .with_borrow(|t| t.items().iter().any(|item| t.is_flashing(item.id)));
+                        if has_flashing {
+                            BLINK_PHASE.set(!BLINK_PHASE.get());
+                            bar::invalidate_all();
+                        } else if BLINK_PHASE.get() {
+                            BLINK_PHASE.set(false);
+                            bar::invalidate_all();
+                        }
                     }
                     if let Some(line) = jtb_win::flyout::tick() {
                         log(&line);

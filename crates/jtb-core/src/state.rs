@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::activity::NotificationRule;
 use crate::config::PinConfig;
 
 /// What the app itself changes while running, kept apart from the user's `jtb.json`.
@@ -14,6 +15,8 @@ pub struct State {
     pub pins: Vec<PinConfig>,
     /// Paths of config pins the user removed from the bar.
     pub unpinned: Vec<String>,
+    /// User-created notification/activity rules.
+    pub rules: Vec<NotificationRule>,
 }
 
 impl State {
@@ -96,6 +99,29 @@ impl State {
             }
         }
         pins
+    }
+
+    /// Adds a notification rule for an executable, replacing an existing rule for that executable.
+    pub fn add_rule(&mut self, rule: NotificationRule) {
+        self.rules
+            .retain(|r| !r.exe.eq_ignore_ascii_case(&rule.exe));
+        self.rules.push(rule);
+    }
+
+    /// Returns the active rules: config rules plus user-created rules from state.
+    /// Falls back to default coding-agent rules if none are configured.
+    pub fn effective_rules(&self, config_rules: &[NotificationRule]) -> Vec<NotificationRule> {
+        let mut rules = config_rules.to_vec();
+        for rule in &self.rules {
+            if !rules.iter().any(|r| r.exe.eq_ignore_ascii_case(&rule.exe)) {
+                rules.push(rule.clone());
+            }
+        }
+        if rules.is_empty() {
+            crate::activity::default_rules()
+        } else {
+            rules
+        }
     }
 }
 

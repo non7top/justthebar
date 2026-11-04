@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::activity::NotificationRule;
 use crate::scene::Color;
 use crate::Edge;
 
@@ -296,6 +297,24 @@ impl Default for ClockConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ActivityConfig {
+    pub enabled: bool,
+    pub record_title_changes: bool,
+    pub rules: Vec<NotificationRule>,
+}
+
+impl Default for ActivityConfig {
+    fn default() -> Self {
+        ActivityConfig {
+            enabled: true,
+            record_title_changes: false,
+            rules: Vec::new(),
+        }
+    }
+}
+
 /// The only config file version this build understands.
 pub const CONFIG_VERSION: u32 = 1;
 
@@ -317,6 +336,7 @@ pub struct Config {
     pub widgets: Vec<WidgetConfig>,
     pub pins: Vec<PinConfig>,
     pub groups: Vec<GroupConfig>,
+    pub activity: ActivityConfig,
 }
 
 impl Default for Config {
@@ -335,6 +355,7 @@ impl Default for Config {
             widgets: Vec::new(),
             pins: Vec::new(),
             groups: Vec::new(),
+            activity: ActivityConfig::default(),
         }
     }
 }

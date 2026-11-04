@@ -188,6 +188,18 @@ pub const SCHEMA: &[OptionSpec] = &[
         description: "Widgets in order: battery, language, network, volume. Add :tray to a name to put it in the notification area.",
         default: "",
     },
+    OptionSpec {
+        path: "activity.enabled",
+        kind: Kind::Bool,
+        description: "Track window activity lifecycle and notifications for coding agents.",
+        default: "true",
+    },
+    OptionSpec {
+        path: "activity.record_title_changes",
+        kind: Kind::Bool,
+        description: "Log every window title change to jtb.log to help write notification rules.",
+        default: "false",
+    },
 ];
 
 /// One line of the settings window: an option with its path resolved to an array entry.

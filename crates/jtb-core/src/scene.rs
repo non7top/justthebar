@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::activity::ActivityState;
 use crate::buttons::{
     bar_layout_with_widgets, clock_rect_sized, default_clock_extent, icon_rect, stripe_split,
     title_left, tray_icon_rect,
@@ -130,6 +131,10 @@ pub struct ButtonView {
     pub flashing: bool,
     /// The title changed while the window was not active; drawn with a side stripe.
     pub title_changed: bool,
+    /// An activity lifecycle state transition occurred (e.g. Working -> Idle); drawn with an emerald stripe.
+    pub status_changed: bool,
+    /// Current activity state of the window.
+    pub activity: ActivityState,
     /// A window under a group header; indented on side bars.
     pub child: bool,
     /// A group or pin header.
@@ -428,7 +433,14 @@ pub fn build_scene_with_widgets(
                 color: DROP_LINE,
             });
         }
-        let content = if button.title_changed {
+        let content = if button.status_changed {
+            let (stripe, rest) = stripe_split(edge, rect, scale);
+            fills.push(Fill {
+                rect: stripe,
+                color: Color::rgb(0.20, 0.82, 0.38),
+            });
+            rest
+        } else if button.title_changed {
             let (stripe, rest) = stripe_split(edge, rect, scale);
             fills.push(Fill {
                 rect: stripe,
@@ -516,6 +528,8 @@ mod tests {
             minimized: false,
             flashing: false,
             title_changed: false,
+            status_changed: false,
+            activity: ActivityState::default(),
             child: false,
             header: false,
             drag: Drag::None,
@@ -681,6 +695,8 @@ mod tests {
             minimized: false,
             flashing: false,
             title_changed: false,
+            status_changed: false,
+            activity: ActivityState::default(),
             child: false,
             header: false,
             drag,
@@ -750,6 +766,8 @@ mod tests {
                 minimized: false,
                 flashing: false,
                 title_changed: false,
+                status_changed: false,
+                activity: ActivityState::default(),
                 child: false,
                 header: false,
                 drag: Drag::None,
@@ -763,6 +781,8 @@ mod tests {
                 minimized: false,
                 flashing: false,
                 title_changed: false,
+                status_changed: false,
+                activity: ActivityState::default(),
                 child: false,
                 header: false,
                 drag: Drag::None,
@@ -787,6 +807,8 @@ mod tests {
             minimized: true,
             flashing: false,
             title_changed: false,
+            status_changed: false,
+            activity: ActivityState::default(),
             child: false,
             header: false,
             drag: Drag::None,
@@ -803,6 +825,8 @@ mod tests {
             minimized: false,
             flashing: true,
             title_changed: true,
+            status_changed: false,
+            activity: ActivityState::default(),
             child: false,
             header: false,
             drag: Drag::None,
@@ -814,5 +838,30 @@ mod tests {
         assert_eq!(flashing.fills.len(), 2);
         assert_eq!(scene.labels[1].align, Align::Left);
         assert_eq!(scene.labels[0].align, Align::Center);
+    }
+
+    #[test]
+    fn status_changed_draws_green_stripe() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let view = ButtonView {
+            title: "agent".into(),
+            active: false,
+            hovered: false,
+            minimized: false,
+            flashing: false,
+            title_changed: false,
+            status_changed: true,
+            activity: ActivityState::Idle,
+            child: false,
+            header: false,
+            drag: Drag::None,
+            start: None,
+            icon: None,
+        };
+        let scene = build_scene(Edge::Bottom, 1920.0, 40.0, 1.0, bg, (12, 0), &[view], &[]);
+        assert!(scene
+            .fills
+            .iter()
+            .any(|f| f.color.g > 0.8 && f.color.r < 0.3));
     }
 }

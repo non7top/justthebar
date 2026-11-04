@@ -1,3 +1,5 @@
+use crate::activity::ActivityState;
+
 /// One window shown on the bar. `id` is the window handle value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
@@ -5,6 +7,7 @@ pub struct Task {
     pub title: String,
     /// Full path of the window's executable; empty when it could not be read.
     pub exe: String,
+    pub activity: ActivityState,
 }
 
 /// The windows on the taskbar in creation order, and which one is active.
@@ -14,6 +17,7 @@ pub struct Tasks {
     active: Option<isize>,
     flashing: Vec<isize>,
     title_changed: Vec<isize>,
+    status_changed: Vec<isize>,
 }
 
 impl Tasks {
@@ -33,6 +37,7 @@ impl Tasks {
                 if task.title != title
                     && self.active != Some(id)
                     && !self.title_changed.contains(&id)
+                    && task.activity != ActivityState::Working
                 {
                     self.title_changed.push(id);
                 }
@@ -42,12 +47,38 @@ impl Tasks {
                 id,
                 title,
                 exe: String::new(),
+                activity: ActivityState::default(),
             }),
         }
     }
 
     pub fn has_new_title(&self, id: isize) -> bool {
         self.title_changed.contains(&id)
+    }
+
+    pub fn has_status_changed(&self, id: isize) -> bool {
+        self.status_changed.contains(&id)
+    }
+
+    pub fn set_status_changed(&mut self, id: isize, changed: bool) {
+        self.status_changed.retain(|f| *f != id);
+        if changed && self.active != Some(id) {
+            self.status_changed.push(id);
+        }
+    }
+
+    pub fn activity_state(&self, id: isize) -> ActivityState {
+        self.items
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.activity)
+            .unwrap_or_default()
+    }
+
+    pub fn set_activity_state(&mut self, id: isize, state: ActivityState) {
+        if let Some(task) = self.items.iter_mut().find(|t| t.id == id) {
+            task.activity = state;
+        }
     }
 
     pub fn is_flashing(&self, id: isize) -> bool {
@@ -65,6 +96,7 @@ impl Tasks {
     pub fn remove(&mut self, id: isize) {
         self.flashing.retain(|f| *f != id);
         self.title_changed.retain(|f| *f != id);
+        self.status_changed.retain(|f| *f != id);
         self.items.retain(|t| t.id != id);
         if self.active == Some(id) {
             self.active = None;
@@ -102,6 +134,7 @@ impl Tasks {
         if let Some(id) = id {
             self.flashing.retain(|f| *f != id);
             self.title_changed.retain(|f| *f != id);
+            self.status_changed.retain(|f| *f != id);
         }
     }
 
@@ -111,9 +144,14 @@ impl Tasks {
         self.flashing.retain(|f| tasks.iter().any(|n| n.id == *f));
         self.title_changed
             .retain(|f| tasks.iter().any(|n| n.id == *f));
+        self.status_changed
+            .retain(|f| tasks.iter().any(|n| n.id == *f));
         for task in tasks {
             self.upsert(task.id, task.title);
             self.set_exe(task.id, task.exe);
+            if task.activity != ActivityState::default() {
+                self.set_activity_state(task.id, task.activity);
+            }
         }
         if self.active.is_some_and(|id| !self.contains(id)) {
             self.active = None;
@@ -130,6 +168,7 @@ mod tests {
             id,
             title: title.to_string(),
             exe: String::new(),
+            activity: ActivityState::default(),
         }
     }
 
@@ -177,6 +216,25 @@ mod tests {
         assert!(tasks.has_new_title(1));
         assert!(!tasks.has_new_title(2));
         tasks.set_active(Some(1));
+        assert!(!tasks.has_new_title(1));
+    }
+
+    #[test]
+    fn status_change_is_cleared_on_activate() {
+        let mut tasks = Tasks::default();
+        tasks.upsert(1, "one".into());
+        tasks.set_status_changed(1, true);
+        assert!(tasks.has_status_changed(1));
+        tasks.set_active(Some(1));
+        assert!(!tasks.has_status_changed(1));
+    }
+
+    #[test]
+    fn working_task_title_update_does_not_set_title_changed() {
+        let mut tasks = Tasks::default();
+        tasks.upsert(1, "step 1".into());
+        tasks.set_activity_state(1, ActivityState::Working);
+        tasks.upsert(1, "step 2".into());
         assert!(!tasks.has_new_title(1));
     }
 
