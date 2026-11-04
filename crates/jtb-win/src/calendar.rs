@@ -24,6 +24,8 @@ const CLASS_NAME: windows::core::PCWSTR = w!("JtbCalendarPopup");
 const MONTHCAL_CLASS: windows::core::PCWSTR = w!("SysMonthCal32");
 const MCM_FIRST: u32 = 0x1000;
 const MCM_GETMINREQRECT: u32 = MCM_FIRST + 9;
+const MCM_SETMONTHDELTA: u32 = MCM_FIRST + 20;
+const MCM_SIZERECTTOMIN: u32 = MCM_FIRST + 29;
 
 #[derive(Clone, Copy)]
 struct State {
@@ -102,7 +104,7 @@ fn register_class() {
 }
 
 /// Toggles the calendar popup next to the clock defined by `anchor`.
-pub fn toggle(anchor: &Anchor) {
+pub fn toggle(anchor: &Anchor, months: u32) {
     if let Some(state) = STATE.get() {
         unsafe {
             let _ = DestroyWindow(state.popup);
@@ -167,8 +169,26 @@ pub fn toggle(anchor: &Anchor) {
             Some(WPARAM(0)),
             Some(LPARAM(&mut req as *mut _ as isize)),
         );
-        let width = req.right - req.left;
-        let height = req.bottom - req.top;
+        let w = req.right - req.left;
+        let h = req.bottom - req.top;
+
+        let count = months.clamp(1, 12) as i32;
+        let mut target = RECT {
+            left: 0,
+            top: 0,
+            right: w + 16,
+            bottom: h * count + 40,
+        };
+        SendMessageW(
+            child,
+            MCM_SIZERECTTOMIN,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut target as *mut _ as isize)),
+        );
+        let width = (target.right - target.left).max(w);
+        let height = (target.bottom - target.top).max(h * count);
+
+        let _ = SendMessageW(child, MCM_SETMONTHDELTA, Some(WPARAM(1)), None);
 
         let _ = SetWindowPos(
             child,

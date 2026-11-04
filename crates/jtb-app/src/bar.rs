@@ -727,7 +727,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         }
                         Hit::Clock => {
                             if let Some(anchor) = clock_anchor(hwnd, bar) {
-                                jtb_win::calendar::toggle(&anchor);
+                                jtb_win::calendar::toggle(&anchor, crate::clock_months());
                             }
                             return LRESULT(0);
                         }
