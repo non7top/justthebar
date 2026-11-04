@@ -9,6 +9,7 @@ pub mod menuhost;
 pub mod monitors;
 pub mod shell;
 pub mod startmenu;
+pub mod stockmenu;
 pub mod system;
 pub mod tasks;
 pub mod tooltip;

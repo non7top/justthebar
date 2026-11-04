@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use jtb_core::config::PinConfig;
-use jtb_core::config::{Action, Button, Config, StartConfig, Target};
+use jtb_core::config::{Action, Button, Config, StartConfig, StartMenu, Target};
 use jtb_core::grouping::{build_rows, Row, Rules};
 use jtb_core::icon::Icon;
 use jtb_core::scene::{ButtonView, Drag, StartView, TrayView, WidgetView};
@@ -21,7 +21,7 @@ use jtb_core::tasks::{Task, Tasks};
 use jtb_core::tray::{Mouse, Side, TrayIcon, TrayIcons, TrayKey};
 use jtb_core::traypacket;
 use jtb_core::Edge;
-use jtb_win::{explorer, menuhost, monitors, shell, startmenu, tasks, tray};
+use jtb_win::{explorer, menuhost, monitors, shell, startmenu, stockmenu, tasks, tray};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -668,6 +668,41 @@ fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
 }
 
 fn run_start(config: &StartConfig) {
+    if config.menu == StartMenu::Stock {
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        let (edge, bar) = match START_BAR.get() {
+            Some((abe, r)) => {
+                let e = match abe {
+                    0 => Edge::Left,
+                    1 => Edge::Top,
+                    2 => Edge::Right,
+                    _ => Edge::Bottom,
+                };
+                (e, r)
+            }
+            None => (Edge::Bottom, RECT::default()),
+        };
+        let button = START_RECT.take().unwrap_or(bar);
+        let hwnd = HWND(START_BAR_WINDOW.get() as *mut _);
+        let monitor = unsafe { MonitorFromRect(&button, MONITOR_DEFAULTTONEAREST) };
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor_rect = if unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            info.rcWork
+        } else {
+            button
+        };
+        log(&format!(
+            "start: opening stock flat start menu at button {button:?}"
+        ));
+        stockmenu::toggle(hwnd, edge, bar, button, monitor_rect);
+        return;
+    }
+
     log(&format!(
         "start button: {} {:?}",
         config.command, config.args
