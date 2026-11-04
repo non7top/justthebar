@@ -172,11 +172,21 @@ impl From<WidgetEntry> for WidgetConfig {
     }
 }
 
+/// What opens when the Start button is clicked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StartMenu {
+    #[default]
+    Stock,
+    OpenShell,
+}
+
 /// The Start button, drawn by the bar; a click runs `command`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StartConfig {
     pub enabled: bool,
+    pub menu: StartMenu,
     pub command: String,
     pub args: Vec<String>,
     pub label: String,
@@ -194,6 +204,7 @@ impl Default for StartConfig {
     fn default() -> Self {
         StartConfig {
             enabled: false,
+            menu: StartMenu::Stock,
             command: r"C:\Program Files\Open-Shell\StartMenu.exe".to_string(),
             args: vec!["-toggle".to_string()],
             label: "Start".to_string(),

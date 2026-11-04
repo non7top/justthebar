@@ -117,6 +117,12 @@ pub const SCHEMA: &[OptionSpec] = &[
         default: "false",
     },
     OptionSpec {
+        path: "start.menu",
+        kind: Kind::Choice(&["stock", "openshell"]),
+        description: "Start menu provider: stock built-in flat widget or Open-Shell.",
+        default: "stock",
+    },
+    OptionSpec {
         path: "start.command",
         kind: Kind::Text,
         description: "Program the Start button runs (Open-Shell's StartMenu.exe).",
