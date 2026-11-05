@@ -718,15 +718,12 @@ fn uses_stock_menu(config: &StartConfig) -> bool {
     }
 }
 
-/// Right click on the Start button: Open-Shell's own menu, or the Win+X menu with Shift held, as
-/// Open-Shell does. Without Open-Shell the Win+X menu is all there is.
+/// Right click on the Start button: Open-Shell's own menu, when Open-Shell is the start menu.
 fn start_context_menu(hwnd: HWND) {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
     let config = current_config().start;
     let shift = unsafe { GetKeyState(i32::from(VK_SHIFT.0)) } < 0;
     if shift || uses_stock_menu(&config) {
-        let sent = jtb_win::system::open_win_x();
-        log(&format!("start: Win+X menu requested, sent: {sent}"));
         return;
     }
     let items = [

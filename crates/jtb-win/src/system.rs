@@ -248,28 +248,6 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Opens the Windows power user menu the way Win+X does, by sending the hotkey message to
-/// Explorer's taskbar (as Open-Shell does), so a held Shift does not turn it into Shift+Win+X.
-/// Windows decides where it appears. False when Explorer has no taskbar.
-pub fn open_win_x() -> bool {
-    use windows::Win32::Foundation::{LPARAM, WPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_HOTKEY};
-    const MOD_WIN: isize = 8;
-    const ID_WIN_X: usize = 590;
-    let Some(tray) = crate::tray::explorer_tray() else {
-        return false;
-    };
-    unsafe {
-        PostMessageW(
-            Some(tray),
-            WM_HOTKEY,
-            WPARAM(ID_WIN_X),
-            LPARAM(MOD_WIN | (isize::from(b'X') << 16)),
-        )
-    }
-    .is_ok()
-}
-
 /// Opens the Windows 11 notification center and calendar the way Win+N does.
 pub fn open_calendar() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{

@@ -36,10 +36,9 @@ force one of the two; the stock menu ignores `command`, `args` and `in_process`.
 
 Right click on the Start button shows Open-Shell's own context menu: Windows Explorer (This PC),
 Open (your Start Menu folder), Open All Users, Settings (`StartMenu.exe -settings`) and
-Exit (`StartMenu.exe -exit`). Shift+right click, or a right click when the built-in menu is used,
-opens the Windows Win+X menu instead; Windows chooses where that one appears. This follows
-Open-Shell's default (its `ShiftRight` option off). Open-Shell's Open Pinned and Help entries and its
-`ExplorerPath` setting are not read.
+Exit (`StartMenu.exe -exit`). Shift+right click, and a right click when the built-in menu is used,
+do nothing. Open-Shell's Open Pinned and Help entries, its Win+X menu and its `ExplorerPath`
+setting are not read or used.
 
 ## Menu position
 
