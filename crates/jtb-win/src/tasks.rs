@@ -154,6 +154,7 @@ unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> BOOL {
             id,
             title: title(id),
             exe: process_path(id).unwrap_or_default(),
+            activity: Default::default(),
         });
     }
     BOOL(1)

@@ -1,0 +1,3 @@
+@echo off
+echo Signaling running JustTheBar to restart...
+"%~dp0jtb-app.exe" --restart

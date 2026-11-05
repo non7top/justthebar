@@ -19,4 +19,7 @@ deploy:
 	unzip -o $(ARTIFACTS)/*/jtb-app/jtb-app.zip -d dist
 	mkdir -p $(DEPLOY_DIR)
 	rm -f $(DEPLOY_DIR)/*.cmd
-	cp dist/jtb-app.exe dist/jtb_hook.dll scripts/*.cmd scripts/jtb.json $(DEPLOY_DIR)/
+	rm -f $(DEPLOY_DIR)/*.old* 2>/dev/null || true
+	cp dist/jtb-app.exe $(DEPLOY_DIR)/ 2>/dev/null || (mv -f $(DEPLOY_DIR)/jtb-app.exe $(DEPLOY_DIR)/jtb-app.exe.old.$$ && cp dist/jtb-app.exe $(DEPLOY_DIR)/)
+	cp dist/jtb_hook.dll $(DEPLOY_DIR)/ 2>/dev/null || (mv -f $(DEPLOY_DIR)/jtb_hook.dll $(DEPLOY_DIR)/jtb_hook.dll.old.$$ && cp dist/jtb_hook.dll $(DEPLOY_DIR)/)
+	cp scripts/*.cmd scripts/jtb.json $(DEPLOY_DIR)/
