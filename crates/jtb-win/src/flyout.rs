@@ -66,8 +66,11 @@ fn all_flyouts() -> Vec<HWND> {
 /// shown. Logs the first outcome and each change of it.
 fn aim_hook(anchor: &Anchor) {
     HOOKED.set(false);
-    for window in all_flyouts() {
-        let state = match hookdll::attach(window) {
+    let windows = all_flyouts();
+    for window in &windows {
+        let window = *window;
+        let attached = hookdll::attach(window);
+        let state = match &attached {
             Ok(true) => {
                 let mut rect = RECT::default();
                 if unsafe { GetWindowRect(window, &mut rect) }.is_ok() {
@@ -75,11 +78,17 @@ fn aim_hook(anchor: &Anchor) {
                     let side = matches!(anchor.edge, Edge::Left | Edge::Right);
                     hookdll::set_position(window, x, (!side).then_some(y));
                     HOOKED.set(true);
-                    if !unsafe { IsWindowVisible(window) }.as_bool() || cloaked(window) {
+                    let visible = unsafe { IsWindowVisible(window) }.as_bool();
+                    let hidden = cloaked(window);
+                    let mut note = format!(
+                        "window {:#x} of {}: at {rect:?}, visible {visible}, cloaked {hidden}, target ({x}, {y})",
+                        window.0 as usize,
+                        windows.len()
+                    );
+                    if !visible || hidden {
                         // On the first open the shell shows the window where it was parked, so
-                        // the hidden window is parked at the target (a move to its own place
-                        // still showed it at the old x).
-                        let _ = unsafe {
+                        // the hidden window is parked at the target.
+                        let moved = unsafe {
                             SetWindowPos(
                                 window,
                                 None,
@@ -90,7 +99,11 @@ fn aim_hook(anchor: &Anchor) {
                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
                             )
                         };
+                        let mut after = RECT::default();
+                        let _ = unsafe { GetWindowRect(window, &mut after) };
+                        note += &format!(", pre-move {moved:?}, now at {after:?}");
                     }
+                    LINES.with_borrow_mut(|lines| lines.push(format!("flyout: {note}")));
                 }
                 "placing the flyout from inside ShellHost".to_string()
             }
