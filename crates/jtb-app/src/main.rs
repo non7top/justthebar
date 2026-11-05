@@ -45,6 +45,7 @@ const TIMER_ZORDER: usize = 7;
 
 const WM_APP_RESTART: u32 = 0x8001;
 const WM_APP_QUIT: u32 = 0x8002;
+const WM_APP_WINKEY: u32 = 0x8003;
 
 struct State {
     config: Config,
@@ -225,6 +226,20 @@ fn apply(config: &Config, force_hide_explorer: bool) {
     }
     bar::build(planned, hide && !explorer::startup_autohide(), config);
     sync_tray(config.tray.enabled);
+    sync_win_key(config);
+}
+
+/// Starts or stops the Windows key hook to match the config.
+fn sync_win_key(config: &Config) {
+    let (Some(control), true) = (CONTROL.get(), config.start.enabled && config.start.win_key)
+    else {
+        jtb_win::winkey::uninstall();
+        return;
+    };
+    match jtb_win::winkey::install(control, WM_APP_WINKEY) {
+        Ok(()) => {}
+        Err(error) => log(&format!("start: the Windows key hook failed: {error}")),
+    }
 }
 
 /// Takes or gives back the tray role to match the config.
@@ -1364,6 +1379,7 @@ pub fn restart() {
 
 /// Removes all appbars and ends the message loop.
 pub fn quit() {
+    jtb_win::winkey::uninstall();
     menuhost::close();
     jtb_win::flyout::release_hook();
     bar::destroy_all();
@@ -1576,6 +1592,11 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         WM_APP_RESTART => {
             log("control: restart message received");
             restart();
+            LRESULT(0)
+        }
+        WM_APP_WINKEY => {
+            log("start: Windows key pressed alone");
+            bar::press_start_at_cursor();
             LRESULT(0)
         }
         WM_APP_QUIT => {

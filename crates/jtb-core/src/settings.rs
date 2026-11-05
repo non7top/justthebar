@@ -159,6 +159,12 @@ pub const SCHEMA: &[OptionSpec] = &[
         default: "true",
     },
     OptionSpec {
+        path: "start.win_key",
+        kind: Kind::Bool,
+        description: "A lone Windows key press opens the Start menu at the bar's Start button.",
+        default: "true",
+    },
+    OptionSpec {
         path: "tray.enabled",
         kind: Kind::Bool,
         description: "Show the notification area icons on one of the bars.",

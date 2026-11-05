@@ -263,6 +263,30 @@ pub fn flyout_anchor() -> Option<jtb_win::flyout::Anchor> {
     })
 }
 
+/// A lone press of the Windows key: opens the Start menu from the Start button of the bar on the
+/// monitor under the cursor, or of the first bar when none is there.
+pub fn press_start_at_cursor() {
+    use windows::Win32::Graphics::Gdi::{
+        MonitorFromPoint, MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut cursor = POINT::default();
+    let _ = unsafe { GetCursorPos(&mut cursor) };
+    let monitor = unsafe { MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) };
+    let Some((hwnd, bar)) = BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| unsafe { MonitorFromWindow(b.hwnd, MONITOR_DEFAULTTONEAREST) } == monitor)
+            .or(bars.first())
+            .map(|b| (b.hwnd, b.bar))
+    }) else {
+        return;
+    };
+    if crate::start_enabled() {
+        note_start_rect(hwnd, bar);
+        crate::click_row(task_monitor_of(hwnd), 0, Button::Left);
+    }
+}
+
 fn bar_for(hwnd: HWND) -> Option<AppBar> {
     BARS.with_borrow(|bars| bars.iter().find(|b| b.hwnd == hwnd).map(|b| b.bar))
 }

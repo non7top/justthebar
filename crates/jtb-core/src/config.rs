@@ -199,6 +199,9 @@ pub struct StartConfig {
     /// Opens Open-Shell's menu from a copy of its library loaded into this app, which lets the
     /// bar say exactly where the menu goes; falls back to `command` when that fails.
     pub in_process: bool,
+    /// A lone press of the Windows key opens the menu from the Start button of the bar on the
+    /// monitor under the cursor.
+    pub win_key: bool,
 }
 
 impl Default for StartConfig {
@@ -212,6 +215,7 @@ impl Default for StartConfig {
             image: "start-button.png".to_string(),
             size: 54,
             in_process: true,
+            win_key: true,
         }
     }
 }

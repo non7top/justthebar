@@ -14,3 +14,4 @@ pub mod system;
 pub mod tasks;
 pub mod tooltip;
 pub mod tray;
+pub mod winkey;
