@@ -248,29 +248,26 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Opens the Windows power user menu the way Win+X does. Windows decides where it appears.
-pub fn open_win_x() {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY, VK_LWIN, VK_X,
+/// Opens the Windows power user menu the way Win+X does, by sending the hotkey message to
+/// Explorer's taskbar (as Open-Shell does), so a held Shift does not turn it into Shift+Win+X.
+/// Windows decides where it appears. False when Explorer has no taskbar.
+pub fn open_win_x() -> bool {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_HOTKEY};
+    const MOD_WIN: isize = 8;
+    const ID_WIN_X: usize = 590;
+    let Some(tray) = crate::tray::explorer_tray() else {
+        return false;
     };
-    let key = |code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: code,
-                dwFlags: flags,
-                ..Default::default()
-            },
-        },
-    };
-    let inputs = [
-        key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
-        key(VK_X, KEYBD_EVENT_FLAGS(0)),
-        key(VK_X, KEYEVENTF_KEYUP),
-        key(VK_LWIN, KEYEVENTF_KEYUP),
-    ];
-    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+    unsafe {
+        PostMessageW(
+            Some(tray),
+            WM_HOTKEY,
+            WPARAM(ID_WIN_X),
+            LPARAM(MOD_WIN | (isize::from(b'X') << 16)),
+        )
+    }
+    .is_ok()
 }
 
 /// Opens the Windows 11 notification center and calendar the way Win+N does.
