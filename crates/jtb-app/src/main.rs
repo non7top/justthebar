@@ -1599,6 +1599,9 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                 }
                 TIMER_ZORDER => {
+                    if let Some(line) = bar::follow_fullscreen() {
+                        log(&line);
+                    }
                     bar::keep_above_explorer();
                     if tray::follow_explorer() {
                         log("tray: Explorer restarted, took the tray role again");

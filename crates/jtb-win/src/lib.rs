@@ -2,6 +2,7 @@ pub mod appbar;
 pub mod calendar;
 pub mod explorer;
 pub mod flyout;
+pub mod fullscreen;
 pub mod glyph;
 pub mod hookdll;
 pub mod langmenu;

@@ -63,6 +63,7 @@ struct BarWindow {
 
 thread_local! {
     static BARS: RefCell<Vec<BarWindow>> = const { RefCell::new(Vec::new()) };
+    static BEHIND_FULLSCREEN: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
 }
 
 /// A bar to create: its config, the monitor index it resolved to, and that monitor's rect.
@@ -202,6 +203,9 @@ pub fn destroy_all() {
 pub fn keep_above_explorer() {
     let hwnds: Vec<HWND> = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect());
     for &hwnd in &hwnds {
+        if BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd)) {
+            continue;
+        }
         if jtb_win::explorer::tray_above(hwnd, &hwnds) {
             unsafe {
                 let _ = SetWindowPos(
@@ -216,6 +220,78 @@ pub fn keep_above_explorer() {
             }
         }
     }
+}
+
+/// Puts the bars on a monitor that a fullscreen window covers behind it, and back on top when
+/// the window goes. Returns a line for the log when a bar changed sides.
+pub fn follow_fullscreen() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_EXSTYLE, HWND_BOTTOM, WS_EX_TOPMOST,
+    };
+    let hwnds: Vec<HWND> = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect());
+    let covered = jtb_win::fullscreen::covered_monitor(&hwnds);
+    let mut line = None;
+    for &hwnd in &hwnds {
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            continue;
+        }
+        let behind = covered == Some(info.rcMonitor);
+        let was = BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd));
+        let topmost = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+        if behind && (!was || topmost) {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_BOTTOM),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        } else if !behind && was {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        if behind != was {
+            BEHIND_FULLSCREEN.with_borrow_mut(|hidden| {
+                if behind {
+                    hidden.push(hwnd);
+                } else {
+                    hidden.retain(|h| *h != hwnd);
+                }
+            });
+            line = Some(format!(
+                "fullscreen: bar {:#x} {} on monitor {:?}",
+                hwnd.0 as usize,
+                if behind {
+                    "stepped back"
+                } else {
+                    "back on top"
+                },
+                info.rcMonitor
+            ));
+        }
+    }
+    line
 }
 
 pub fn invalidate_all() {
