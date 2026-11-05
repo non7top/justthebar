@@ -22,6 +22,9 @@ In `jtb.json`:
 
 Every key but `enabled` is optional and the values above are the defaults.
 
+`"menu": "openshell"` (the default) opens Open-Shell's menu as described below. `"menu": "stock"`
+opens the bar's own flat two-pane menu instead and ignores `command`, `args` and `in_process`.
+
 ## Menu position
 
 Open-Shell works out where to put its menu from Explorer's own (hidden) taskbar, so on a custom bar

@@ -76,14 +76,15 @@ fn aim_hook(anchor: &Anchor) {
                     hookdll::set_position(window, x, (!side).then_some(y));
                     HOOKED.set(true);
                     if !unsafe { IsWindowVisible(window) }.as_bool() {
-                        // On the first open the shell shows the window where it was parked
-                        // without moving it, so there is nothing for the hook to rewrite.
+                        // On the first open the shell shows the window where it was parked, so
+                        // the hidden window is parked at the target (a move to its own place
+                        // still showed it at the old x).
                         let _ = unsafe {
                             SetWindowPos(
                                 window,
                                 None,
-                                rect.left,
-                                rect.top,
+                                x,
+                                if side { rect.top } else { y },
                                 0,
                                 0,
                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,

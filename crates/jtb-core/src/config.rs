@@ -177,8 +177,8 @@ impl From<WidgetEntry> for WidgetConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StartMenu {
-    #[default]
     Stock,
+    #[default]
     OpenShell,
 }
 
@@ -205,7 +205,7 @@ impl Default for StartConfig {
     fn default() -> Self {
         StartConfig {
             enabled: false,
-            menu: StartMenu::Stock,
+            menu: StartMenu::OpenShell,
             command: r"C:\Program Files\Open-Shell\StartMenu.exe".to_string(),
             args: vec!["-toggle".to_string()],
             label: "Start".to_string(),
@@ -503,6 +503,9 @@ mod tests {
         let defaults = Config::parse("{}").unwrap().start;
         assert!(!defaults.enabled);
         assert_eq!(defaults.args, vec!["-toggle".to_string()]);
+        assert_eq!(defaults.menu, StartMenu::OpenShell);
+        let stock = Config::parse(r#"{"start": {"menu": "stock"}}"#).unwrap();
+        assert_eq!(stock.start.menu, StartMenu::Stock);
         let config =
             Config::parse(r#"{"start": {"enabled": true, "label": "Go", "image": ""}}"#).unwrap();
         assert!(config.start.enabled);
