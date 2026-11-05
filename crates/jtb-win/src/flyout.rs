@@ -75,7 +75,7 @@ fn aim_hook(anchor: &Anchor) {
                     let side = matches!(anchor.edge, Edge::Left | Edge::Right);
                     hookdll::set_position(window, x, (!side).then_some(y));
                     HOOKED.set(true);
-                    if !unsafe { IsWindowVisible(window) }.as_bool() {
+                    if !unsafe { IsWindowVisible(window) }.as_bool() || cloaked(window) {
                         // On the first open the shell shows the window where it was parked, so
                         // the hidden window is parked at the target (a move to its own place
                         // still showed it at the old x).
