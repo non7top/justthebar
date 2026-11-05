@@ -740,7 +740,7 @@ fn start_context_menu(hwnd: HWND) {
     ];
     let folder = |path: &str| launch_app("explorer.exe", &[path.to_string()]);
     match logged_popup(hwnd, &items) {
-        Some(2) => folder("shell:UsersFilesFolder"),
+        Some(2) => folder("shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"),
         Some(3) => folder("shell:Start Menu"),
         Some(4) => folder("shell:Common Start Menu"),
         Some(6) => launch_app(&config.command, &["-settings".to_string()]),
