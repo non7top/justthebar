@@ -22,6 +22,12 @@ In `jtb.json`:
 
 Every key but `enabled` is optional and the values above are the defaults.
 
+`"win_key": true` (the default) makes a lone press of the Windows key open the menu from the Start
+button of the bar on the monitor under the cursor. The bar watches the key with a low-level keyboard
+hook, swallows the release of a lone press and replays it behind an unassigned key press so that
+Open-Shell and Windows see a key combination and stay quiet. Win+other keys are not touched. Set it
+to `false` to leave the key to Open-Shell, which opens its menu at the bottom-left.
+
 `"menu": "openshell"` (the default) opens Open-Shell's menu as described below. `"menu": "stock"`
 opens the bar's own flat two-pane menu instead and ignores `command`, `args` and `in_process`.
 
