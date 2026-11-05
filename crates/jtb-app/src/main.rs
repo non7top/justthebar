@@ -190,6 +190,7 @@ fn apply(config: &Config, force_hide_explorer: bool) {
                 "explorer hidden, startup state={:?}",
                 explorer::startup_state()
             ));
+            log(&explorer::hide_minimized_windows());
         } else {
             explorer::restore();
         }
@@ -997,8 +998,9 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
                 let foreground = tasks::foreground();
                 let active = view.active || foreground == Some(*id);
                 log(&format!(
-                    "click: window {id} active={} foreground={foreground:?}",
-                    view.active
+                    "click: window {id} active={} foreground={foreground:?} gui_active={:?}",
+                    view.active,
+                    tasks::gui_active()
                 ));
                 tasks::activate_or_minimize(*id, active);
             }

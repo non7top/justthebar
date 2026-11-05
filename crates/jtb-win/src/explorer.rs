@@ -10,9 +10,10 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowPos,
-    SystemParametersInfoW, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST, SPI_GETWORKAREA,
-    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_TOPMOST,
+    SystemParametersInfoW, ARW_HIDE, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST,
+    MINIMIZEDMETRICS, MINIMIZEDMETRICS_ARRANGE, SPI_GETMINIMIZEDMETRICS, SPI_GETWORKAREA,
+    SPI_SETMINIMIZEDMETRICS, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_TOPMOST,
 };
 
 const UNSET: u32 = u32::MAX;
@@ -142,6 +143,41 @@ pub fn snapshot() -> String {
         work_area(),
         crate::monitors::describe_work_areas()
     )
+}
+
+/// Makes windows that get minimized vanish into the bar instead of becoming small caption bars on
+/// the desktop (Explorer sets this when it starts as the shell). Returns a line for the log.
+pub fn hide_minimized_windows() -> String {
+    let size = size_of::<MINIMIZEDMETRICS>() as u32;
+    let mut metrics = MINIMIZEDMETRICS {
+        cbSize: size,
+        ..Default::default()
+    };
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETMINIMIZEDMETRICS,
+            size,
+            Some(&mut metrics as *mut MINIMIZEDMETRICS as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    if read.is_err() {
+        return "minimized windows: cannot read the arrangement".to_string();
+    }
+    let before = metrics.iArrange.0;
+    if before & ARW_HIDE != 0 {
+        return format!("minimized windows: already hidden (arrange {before})");
+    }
+    metrics.iArrange = MINIMIZEDMETRICS_ARRANGE(before | ARW_HIDE);
+    let set = unsafe {
+        SystemParametersInfoW(
+            SPI_SETMINIMIZEDMETRICS,
+            size,
+            Some(&mut metrics as *mut MINIMIZEDMETRICS as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    format!("minimized windows: arrange was {before}, set to hidden: {set:?}")
 }
 
 pub fn work_area() -> RECT {

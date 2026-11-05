@@ -16,13 +16,14 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow, GetIconInfo,
-    GetPropW, GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, PostMessageW, RegisterShellHookWindow, RegisterWindowMessageW,
-    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, GCLP_HICON, GCLP_HICONSM,
-    GWL_EXSTYLE, GW_OWNER, HICON, ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG,
-    SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, WM_CLOSE, WM_GETICON, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
+    DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow,
+    GetGUIThreadInfo, GetIconInfo, GetPropW, GetWindow, GetWindowLongPtrW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+    RegisterShellHookWindow, RegisterWindowMessageW, SendMessageTimeoutW, SetForegroundWindow,
+    ShowWindowAsync, GCLP_HICON, GCLP_HICONSM, GUITHREADINFO, GWL_EXSTYLE, GW_OWNER, HICON,
+    ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
+    SW_SHOWNORMAL, WM_CLOSE, WM_GETICON, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_WINDOWEDGE,
 };
 
 // Shell hook codes (wParam of the SHELLHOOK message; lParam is the window).
@@ -176,6 +177,17 @@ pub fn is_minimized(id: isize) -> bool {
 pub fn foreground() -> Option<isize> {
     let hwnd = unsafe { GetForegroundWindow() };
     (!hwnd.is_invalid()).then_some(hwnd.0 as isize)
+}
+
+/// The active window of the thread that has the input focus, which is set even when
+/// `GetForegroundWindow` answers null.
+pub fn gui_active() -> Option<isize> {
+    let mut info = GUITHREADINFO {
+        cbSize: size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetGUIThreadInfo(0, &mut info) }.ok()?;
+    (!info.hwndActive.is_invalid()).then_some(info.hwndActive.0 as isize)
 }
 
 /// Asks the shell to send `hwnd` the shell hook messages; returns the message id to listen for.

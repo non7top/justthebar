@@ -677,6 +677,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         "TaskbarCreated: bar registered again {}",
                         bar.reregister()
                     ));
+                    log(&jtb_win::explorer::hide_minimized_windows());
                 }
                 LRESULT(0)
             }
