@@ -248,6 +248,31 @@ pub fn open_quick_settings() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
+/// Opens the Windows power user menu the way Win+X does. Windows decides where it appears.
+pub fn open_win_x() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY, VK_LWIN, VK_X,
+    };
+    let key = |code: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: code,
+                dwFlags: flags,
+                ..Default::default()
+            },
+        },
+    };
+    let inputs = [
+        key(VK_LWIN, KEYBD_EVENT_FLAGS(0)),
+        key(VK_X, KEYBD_EVENT_FLAGS(0)),
+        key(VK_X, KEYEVENTF_KEYUP),
+        key(VK_LWIN, KEYEVENTF_KEYUP),
+    ];
+    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+}
+
 /// Opens the Windows 11 notification center and calendar the way Win+N does.
 pub fn open_calendar() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{

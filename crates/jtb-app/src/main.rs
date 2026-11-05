@@ -710,13 +710,47 @@ fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
     Some(pos)
 }
 
-fn run_start(config: &StartConfig) {
-    let open_shell_present = std::path::Path::new(&config.command).is_file();
-    let stock = match config.menu {
-        StartMenu::Auto => !open_shell_present,
+/// Whether the Start button opens the built-in menu: asked for, or `auto` without Open-Shell.
+fn uses_stock_menu(config: &StartConfig) -> bool {
+    match config.menu {
+        StartMenu::Auto => !std::path::Path::new(&config.command).is_file(),
         menu => menu == StartMenu::Stock,
-    };
-    if stock {
+    }
+}
+
+/// Right click on the Start button: Open-Shell's own menu, or the Win+X menu with Shift held, as
+/// Open-Shell does. Without Open-Shell the Win+X menu is all there is.
+fn start_context_menu(hwnd: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
+    let config = current_config().start;
+    let shift = unsafe { GetKeyState(i32::from(VK_SHIFT.0)) } < 0;
+    if shift || uses_stock_menu(&config) {
+        jtb_win::system::open_win_x();
+        return;
+    }
+    let items = [
+        ("Open-Shell Menu", false),
+        ("-", true),
+        ("Windows Explorer", true),
+        ("Open", true),
+        ("Open All Users", true),
+        ("-", true),
+        ("Settings", true),
+        ("Exit", true),
+    ];
+    let folder = |path: &str| launch_app("explorer.exe", &[path.to_string()]);
+    match logged_popup(hwnd, &items) {
+        Some(2) => folder("shell:UsersFilesFolder"),
+        Some(3) => folder("shell:Start Menu"),
+        Some(4) => folder("shell:Common Start Menu"),
+        Some(6) => launch_app(&config.command, &["-settings".to_string()]),
+        Some(7) => launch_app(&config.command, &["-exit".to_string()]),
+        _ => {}
+    }
+}
+
+fn run_start(config: &StartConfig) {
+    if uses_stock_menu(config) {
         use windows::Win32::Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
@@ -1158,7 +1192,7 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 _ => {}
             }
         }
-        Click::Start => {}
+        Click::Start => start_context_menu(hwnd),
         Click::Header { key, pin, .. } => {
             let items = [
                 ("Launch new", true),

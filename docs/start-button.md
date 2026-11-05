@@ -32,6 +32,15 @@ to `false` to leave the key to Open-Shell, which opens its menu at the bottom-le
 `command` exists, and the bar's own flat two-pane menu when it does not. `"openshell"` and `"stock"`
 force one of the two; the stock menu ignores `command`, `args` and `in_process`.
 
+## Right click
+
+Right click on the Start button shows Open-Shell's own context menu: Windows Explorer (your profile
+folder), Open (your Start Menu folder), Open All Users, Settings (`StartMenu.exe -settings`) and
+Exit (`StartMenu.exe -exit`). Shift+right click, or a right click when the built-in menu is used,
+opens the Windows Win+X menu instead; Windows chooses where that one appears. This follows
+Open-Shell's default (its `ShiftRight` option off). Open-Shell's Open Pinned and Help entries and its
+`ExplorerPath` setting are not read.
+
 ## Menu position
 
 Open-Shell works out where to put its menu from Explorer's own (hidden) taskbar, so on a custom bar
