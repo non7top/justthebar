@@ -118,9 +118,9 @@ pub const SCHEMA: &[OptionSpec] = &[
     },
     OptionSpec {
         path: "start.menu",
-        kind: Kind::Choice(&["stock", "openshell"]),
-        description: "Start menu provider: Open-Shell, or the built-in flat menu (stock).",
-        default: "openshell",
+        kind: Kind::Choice(&["auto", "openshell", "stock"]),
+        description: "Start menu: Open-Shell when it is installed (auto), only Open-Shell, or the built-in flat menu (stock).",
+        default: "auto",
     },
     OptionSpec {
         path: "start.command",

@@ -28,8 +28,9 @@ hook, swallows the release of a lone press and replays it behind an unassigned k
 Open-Shell and Windows see a key combination and stay quiet. Win+other keys are not touched. Set it
 to `false` to leave the key to Open-Shell, which opens its menu at the bottom-left.
 
-`"menu": "openshell"` (the default) opens Open-Shell's menu as described below. `"menu": "stock"`
-opens the bar's own flat two-pane menu instead and ignores `command`, `args` and `in_process`.
+`"menu": "auto"` (the default) opens Open-Shell's menu as described below when the file named by
+`command` exists, and the bar's own flat two-pane menu when it does not. `"openshell"` and `"stock"`
+force one of the two; the stock menu ignores `command`, `args` and `in_process`.
 
 ## Menu position
 

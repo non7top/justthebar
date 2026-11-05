@@ -177,8 +177,10 @@ impl From<WidgetEntry> for WidgetConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StartMenu {
-    Stock,
+    /// Open-Shell when `start.command` exists, else the built-in menu.
     #[default]
+    Auto,
+    Stock,
     OpenShell,
 }
 
@@ -208,7 +210,7 @@ impl Default for StartConfig {
     fn default() -> Self {
         StartConfig {
             enabled: false,
-            menu: StartMenu::OpenShell,
+            menu: StartMenu::Auto,
             command: r"C:\Program Files\Open-Shell\StartMenu.exe".to_string(),
             args: vec!["-toggle".to_string()],
             label: "Start".to_string(),
@@ -507,7 +509,9 @@ mod tests {
         let defaults = Config::parse("{}").unwrap().start;
         assert!(!defaults.enabled);
         assert_eq!(defaults.args, vec!["-toggle".to_string()]);
-        assert_eq!(defaults.menu, StartMenu::OpenShell);
+        assert_eq!(defaults.menu, StartMenu::Auto);
+        let shell = Config::parse(r#"{"start": {"menu": "openshell"}}"#).unwrap();
+        assert_eq!(shell.start.menu, StartMenu::OpenShell);
         let stock = Config::parse(r#"{"start": {"menu": "stock"}}"#).unwrap();
         assert_eq!(stock.start.menu, StartMenu::Stock);
         let config =

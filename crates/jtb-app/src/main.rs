@@ -711,7 +711,12 @@ fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
 }
 
 fn run_start(config: &StartConfig) {
-    if config.menu == StartMenu::Stock {
+    let open_shell_present = std::path::Path::new(&config.command).is_file();
+    let stock = match config.menu {
+        StartMenu::Auto => !open_shell_present,
+        menu => menu == StartMenu::Stock,
+    };
+    if stock {
         use windows::Win32::Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
