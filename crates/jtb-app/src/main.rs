@@ -520,6 +520,14 @@ enum Click {
 }
 
 impl Click {
+    fn kind(&self) -> &'static str {
+        match self {
+            Click::Window { .. } => "window",
+            Click::Header { .. } => "group header",
+            Click::Start => "start button",
+        }
+    }
+
     /// Key of the group the button belongs to.
     fn key(&self) -> &str {
         match self {
@@ -1084,13 +1092,28 @@ fn pin_program(path: &str, args: Vec<String>) -> bool {
     })
 }
 
+fn logged_popup(hwnd: HWND, items: &[(&str, bool)]) -> Option<usize> {
+    let started = std::time::Instant::now();
+    let chosen = shell::popup_menu(hwnd, items);
+    log(&format!(
+        "context menu: choice {chosen:?} after {:?}",
+        started.elapsed()
+    ));
+    chosen
+}
+
 /// The right-click menu of the `index`th button of the bar on `monitor`.
 pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
     let config = current_config();
     let pins = effective_pins(&config);
     let Some((_, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
+        log(&format!("context menu: no button at index {index}"));
         return;
     };
+    log(&format!(
+        "context menu: button {index} is a {}",
+        click.kind()
+    ));
     match &click {
         Click::Window { id, .. } => {
             let exe = exe_of(*id);
@@ -1099,7 +1122,7 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 ("Create notification rule...", true),
                 ("Close window", true),
             ];
-            match shell::popup_menu(hwnd, &items) {
+            match logged_popup(hwnd, &items) {
                 Some(0) => {
                     if pin_program(&exe, Vec::new()) {
                         save_state();
@@ -1120,7 +1143,7 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 ("Fold or unfold", true),
                 ("Unpin", pin.is_some()),
             ];
-            match shell::popup_menu(hwnd, &items) {
+            match logged_popup(hwnd, &items) {
                 Some(0) => launch_click(&click, &pins),
                 Some(1) => toggle_fold(key),
                 Some(2) => {
