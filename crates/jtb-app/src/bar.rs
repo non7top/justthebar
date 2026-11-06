@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use jtb_core::buttons::{bar_layout_with_widgets, hit_test, tray_icon_rect, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
@@ -64,6 +64,8 @@ struct BarWindow {
 thread_local! {
     static BARS: RefCell<Vec<BarWindow>> = const { RefCell::new(Vec::new()) };
     static BEHIND_FULLSCREEN: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
+    static RESERVE_TICKS: Cell<u32> = const { Cell::new(0) };
+    static RESERVE_TRIES: Cell<u32> = const { Cell::new(0) };
 }
 
 /// A bar to create: its config, the monitor index it resolved to, and that monitor's rect.
@@ -292,6 +294,61 @@ pub fn follow_fullscreen() -> Option<String> {
         }
     }
     line
+}
+
+/// Windows can reset the work area behind the bars' backs (a display change makes Explorer
+/// recompute it), after which maximized windows cover the bars. Checks every few seconds that each
+/// bar's strip is outside its monitor's work area; if not, reserves it again, first with a new
+/// position and, when that did not help, by registering again. Returns a line for the log.
+pub fn ensure_reserved() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    const CHECK_EVERY_TICKS: u32 = 10;
+    let ticks = RESERVE_TICKS.get() + 1;
+    RESERVE_TICKS.set(ticks % CHECK_EVERY_TICKS);
+    if !ticks.is_multiple_of(CHECK_EVERY_TICKS) {
+        return None;
+    }
+    let bars: Vec<(HWND, AppBar)> =
+        BARS.with_borrow(|bars| bars.iter().map(|b| (b.hwnd, b.bar)).collect());
+    let mut lines = Vec::new();
+    for (hwnd, bar) in bars {
+        let mut rect = RECT::default();
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err()
+            || !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool()
+        {
+            continue;
+        }
+        let work = info.rcWork;
+        let overlap_x = rect.right.min(work.right) - rect.left.max(work.left);
+        let overlap_y = rect.bottom.min(work.bottom) - rect.top.max(work.top);
+        if overlap_x <= 8 || overlap_y <= 8 {
+            continue;
+        }
+        let tries = RESERVE_TRIES.get();
+        RESERVE_TRIES.set(tries + 1);
+        let done = if tries.is_multiple_of(2) {
+            bar.set_pos()
+        } else {
+            bar.reregister()
+        };
+        lines.push(format!(
+            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
+            tries + 1
+        ));
+    }
+    if lines.is_empty() {
+        RESERVE_TRIES.set(0);
+        return None;
+    }
+    Some(lines.join("\n"))
 }
 
 pub fn invalidate_all() {
