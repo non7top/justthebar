@@ -222,6 +222,13 @@ impl AppBar {
         self.set_pos()
     }
 
+    /// Removes the registration and makes it again, which makes Explorer work out the work area
+    /// from scratch.
+    pub fn rebuild(&self) -> String {
+        self.remove();
+        self.reregister()
+    }
+
     pub fn activate(&self) {
         let mut abd = data(self.hwnd);
         unsafe { SHAppBarMessage(ABM_ACTIVATE, &mut abd) };

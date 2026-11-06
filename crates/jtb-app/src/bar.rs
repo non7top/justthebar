@@ -304,7 +304,7 @@ pub fn fullscreen_active() -> bool {
 /// Windows can reset the work area behind the bars' backs (a display change makes Explorer
 /// recompute it), after which maximized windows cover the bars. Checks every few seconds that each
 /// bar's strip is outside its monitor's work area; if not, reserves it again, first with a new
-/// position and, when that did not help, by registering again. Returns a line for the log.
+/// position and, when that did not help, by removing the registration and making it again. Returns a line for the log.
 pub fn ensure_reserved() -> Option<String> {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -321,7 +321,7 @@ pub fn ensure_reserved() -> Option<String> {
     }
     let bars: Vec<(HWND, AppBar)> =
         BARS.with_borrow(|bars| bars.iter().map(|b| (b.hwnd, b.bar)).collect());
-    let mut lines = Vec::new();
+    let mut unreserved = Vec::new();
     for (hwnd, bar) in bars {
         let mut rect = RECT::default();
         let mut info = MONITORINFO {
@@ -337,25 +337,34 @@ pub fn ensure_reserved() -> Option<String> {
         let work = info.rcWork;
         let overlap_x = rect.right.min(work.right) - rect.left.max(work.left);
         let overlap_y = rect.bottom.min(work.bottom) - rect.top.max(work.top);
-        if overlap_x <= 8 || overlap_y <= 8 {
-            continue;
+        if overlap_x > 8 && overlap_y > 8 {
+            unreserved.push((bar, rect, work));
         }
-        let tries = RESERVE_TRIES.get();
-        RESERVE_TRIES.set(tries + 1);
-        let done = if tries.is_multiple_of(2) {
-            bar.set_pos()
-        } else {
-            bar.reregister()
-        };
-        lines.push(format!(
-            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
-            tries + 1
-        ));
     }
-    if lines.is_empty() {
+    if unreserved.is_empty() {
         RESERVE_TRIES.set(0);
         return None;
     }
+    let tries = RESERVE_TRIES.get();
+    RESERVE_TRIES.set(tries + 1);
+    // After a few failures, only look again every 30 s.
+    if tries >= 6 && !tries.is_multiple_of(15) {
+        return None;
+    }
+    let lines: Vec<String> = unreserved
+        .into_iter()
+        .map(|(bar, rect, work)| {
+            let done = if tries == 0 {
+                bar.set_pos()
+            } else {
+                bar.rebuild()
+            };
+            format!(
+                "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
+                tries + 1
+            )
+        })
+        .collect();
     Some(lines.join("\n"))
 }
 
