@@ -789,17 +789,28 @@ fn run_start(config: &StartConfig) {
     ));
     let held = START_RECT.take();
     if let Some(button) = held.filter(|_| config.in_process) {
-        match open_in_process(config, button) {
-            Ok(()) => {
-                log(&format!(
-                    "start: opened Open-Shell's menu in this process: {}",
-                    menuhost::describe()
-                ));
-                return;
+        let started = std::time::Instant::now();
+        let fallback = config.clone();
+        let opened = open_in_process(config, button, move |result| match result {
+            Ok(text) => log(&format!(
+                "start: opened Open-Shell's menu in this process after {:?}: {text}",
+                started.elapsed()
+            )),
+            Err(error) => {
+                log(&format!("start: in-process menu failed: {error}"));
+                open_through_explorer(&fallback, held);
             }
+        });
+        match opened {
+            Ok(()) => return,
             Err(error) => log(&format!("start: in-process menu failed: {error}")),
         }
     }
+    open_through_explorer(config, held);
+}
+
+/// Opens the menu with the command, through Explorer's taskbar when that is how the command works.
+fn open_through_explorer(config: &StartConfig, held: Option<RECT>) {
     if let Some(rect) = held {
         let moved = startmenu::move_button(rect);
         log(&format!(
@@ -821,7 +832,11 @@ fn run_start(config: &StartConfig) {
     }
 }
 
-fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<(), String> {
+fn open_in_process(
+    config: &StartConfig,
+    button: RECT,
+    done: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+) -> std::result::Result<(), String> {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
@@ -848,6 +863,7 @@ fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<()
             monitor_rect: info.rcWork,
             edge,
         },
+        done,
     )
 }
 

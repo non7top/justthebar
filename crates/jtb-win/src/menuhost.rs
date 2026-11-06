@@ -2,7 +2,11 @@
 //! menu placement can be given directly (`StartMenuParams`) instead of being worked out from
 //! Explorer's hidden taskbar.
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::{mpsc, Mutex};
+use std::time::Duration;
 
 use windows::core::{s, w, PCWSTR};
 use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -14,9 +18,11 @@ use windows::Win32::System::LibraryLoader::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, FindWindowW, GetClassNameW, GetWindowRect, SendMessageW,
-    SetWindowPos, SetWindowsHookExW, UnhookWindowsHookEx, CWPSTRUCT, SWP_NOACTIVATE, SWP_NOZORDER,
-    WH_CALLWNDPROC, WM_WINDOWPOSCHANGING, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetClassNameW,
+    GetMessageW, GetWindowRect, PostMessageW, RegisterClassW, SendMessageTimeoutW, SendMessageW,
+    SetWindowPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, CWPSTRUCT,
+    HWND_MESSAGE, MSG, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOZORDER, WH_CALLWNDPROC, WM_APP,
+    WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 #[link(name = "ole32")]
@@ -170,8 +176,9 @@ extern "system" fn hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
 }
 
 /// Toggles Open-Shell's menu in this process with the given placement. Loads the library from
-/// `dll` on first use. Returns an error text when it cannot, so the caller can fall back.
-pub fn toggle(dll: &str, params: StartMenuParams) -> Result<(), String> {
+/// `dll` on first use. Returns an error text when it cannot, so the caller can fall back. Runs on
+/// the menu thread.
+fn run_toggle(dll: &str, params: StartMenuParams) -> Result<(), String> {
     if FAILED.get() {
         return Err("in-process menu failed earlier".to_string());
     }
@@ -243,9 +250,145 @@ pub fn describe() -> String {
     text
 }
 
-/// Stops the worker threads Open-Shell's code started; call once before the process exits.
-pub fn close() {
+fn close_host() {
     if let Some(host) = HOST.with_borrow_mut(|h| h.take()) {
         unsafe { (host.close)(true) };
+    }
+}
+
+const RUN_JOBS: u32 = WM_APP + 1;
+const STOP: u32 = WM_APP + 2;
+
+/// What the menu thread reports after a toggle: the description of the menu, or why it failed.
+type Done = Box<dyn FnOnce(Result<String, String>) + Send>;
+
+struct Job {
+    dll: String,
+    params: StartMenuParams,
+    done: Done,
+}
+
+// The window handles in `params` are only passed on to Open-Shell's code on the menu thread.
+unsafe impl Send for Job {}
+
+static JOBS: Mutex<VecDeque<Job>> = Mutex::new(VecDeque::new());
+/// The menu thread's control window, or 0 before the thread started.
+static CONTROL: AtomicIsize = AtomicIsize::new(0);
+
+unsafe extern "system" fn control_proc(
+    window: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        RUN_JOBS => {
+            loop {
+                let job = JOBS.lock().ok().and_then(|mut jobs| jobs.pop_front());
+                let Some(job) = job else { break };
+                let result = run_toggle(&job.dll, job.params).map(|()| describe());
+                (job.done)(result);
+            }
+            LRESULT(0)
+        }
+        STOP => {
+            close_host();
+            LRESULT(0)
+        }
+        _ => unsafe { DefWindowProcW(window, msg, wparam, lparam) },
+    }
+}
+
+/// Starts the thread that loads and runs Open-Shell's menu, so the bar keeps running while the
+/// menu is built; returns its control window.
+fn control_window() -> Result<HWND, String> {
+    let known = CONTROL.load(Ordering::SeqCst);
+    if known != 0 {
+        return Ok(HWND(known as *mut _));
+    }
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(control_proc),
+            lpszClassName: w!("JustTheBar.MenuThread"),
+            ..Default::default()
+        };
+        unsafe { RegisterClassW(&class) };
+        let window = unsafe {
+            CreateWindowExW(
+                Default::default(),
+                w!("JustTheBar.MenuThread"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+        };
+        match window {
+            Ok(window) => {
+                let _ = sender.send(Ok(window.0 as isize));
+                let mut msg = MSG::default();
+                while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {
+                    unsafe {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(Err(format!(
+                    "cannot create the menu thread window: {error}"
+                )));
+            }
+        }
+    });
+    let window = receiver
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_else(|_| Err("the menu thread did not start".to_string()))?;
+    CONTROL.store(window, Ordering::SeqCst);
+    Ok(HWND(window as *mut _))
+}
+
+/// Toggles Open-Shell's menu with the given placement on a thread of its own and returns at once.
+/// `done` is called on that thread with the menu's description, or with the reason it failed.
+pub fn toggle(
+    dll: &str,
+    params: StartMenuParams,
+    done: impl FnOnce(Result<String, String>) + Send + 'static,
+) -> Result<(), String> {
+    let control = control_window()?;
+    let job = Job {
+        dll: dll.to_string(),
+        params,
+        done: Box::new(done),
+    };
+    JOBS.lock()
+        .map_err(|_| "the menu job list is broken".to_string())?
+        .push_back(job);
+    unsafe { PostMessageW(Some(control), RUN_JOBS, WPARAM(0), LPARAM(0)) }
+        .map_err(|e| format!("cannot reach the menu thread: {e}"))
+}
+
+/// Stops the worker threads Open-Shell's code started; call once before the process exits.
+pub fn close() {
+    let control = CONTROL.load(Ordering::SeqCst);
+    if control != 0 {
+        unsafe {
+            SendMessageTimeoutW(
+                HWND(control as *mut _),
+                STOP,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_NORMAL,
+                3000,
+                None,
+            );
+        }
     }
 }
