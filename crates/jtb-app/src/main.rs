@@ -42,6 +42,9 @@ const TIMER_CLOCK: usize = 3;
 const TIMER_WIDGETS: usize = 9;
 const TIMER_CONFIG: usize = 4;
 const TIMER_ZORDER: usize = 7;
+const TIMER_DISPLAY: usize = 8;
+/// How long the displays must stay quiet before the bars are laid out again.
+const DISPLAY_SETTLE_MS: u32 = 1000;
 
 const WM_APP_RESTART: u32 = 0x8001;
 const WM_APP_QUIT: u32 = 0x8002;
@@ -1625,8 +1628,22 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     if tray::follow_explorer() {
                         log("tray: Explorer restarted, took the tray role again");
                     }
-                    if tray::keep_on_top() {
+                    if !bar::fullscreen_active() && tray::keep_on_top() {
                         log("tray: raised our Shell_TrayWnd");
+                    }
+                }
+                TIMER_DISPLAY => {
+                    // The bars stay where they are until the fullscreen window is gone: its video
+                    // mode is not the desktop's layout.
+                    if bar::fullscreen_active() {
+                        return LRESULT(0);
+                    }
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_DISPLAY);
+                    }
+                    if let Some((config, force)) = current_settings() {
+                        log("display settled, laying out the bars");
+                        apply(&config, force);
                     }
                 }
                 TIMER_CONFIG => poll_config(),
@@ -1641,11 +1658,11 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             }
             LRESULT(0)
         }
+        // A game changing the video mode sends a burst of these, some while `apply` is waiting on
+        // Explorer; laying out the bars in each of them stacked duplicate bars.
         WM_DISPLAYCHANGE => {
             log("display change");
-            if let Some((config, force)) = current_settings() {
-                apply(&config, force);
-            }
+            unsafe { SetTimer(Some(hwnd), TIMER_DISPLAY, DISPLAY_SETTLE_MS, None) };
             LRESULT(0)
         }
         WM_APP_RESTART => {

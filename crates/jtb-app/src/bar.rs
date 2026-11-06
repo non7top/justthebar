@@ -31,10 +31,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::log;
 
-const VK_ESCAPE: usize = 0x1B;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 /// Repaints the Start button while its hot frame fades in or out.
+const VK_ESCAPE: usize = 0x1B;
 const TIMER_START_FADE: usize = 1;
 const FADE_TICK_MS: u32 = 30;
 /// Fraction of the fade done per tick: 30 ms of 300 ms, as in Open-Shell.
@@ -296,6 +296,11 @@ pub fn follow_fullscreen() -> Option<String> {
     line
 }
 
+/// True while a fullscreen window covers a monitor that has a bar.
+pub fn fullscreen_active() -> bool {
+    BEHIND_FULLSCREEN.with_borrow(|hidden| !hidden.is_empty())
+}
+
 /// Windows can reset the work area behind the bars' backs (a display change makes Explorer
 /// recompute it), after which maximized windows cover the bars. Checks every few seconds that each
 /// bar's strip is outside its monitor's work area; if not, reserves it again, first with a new
@@ -306,6 +311,9 @@ pub fn ensure_reserved() -> Option<String> {
     };
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
     const CHECK_EVERY_TICKS: u32 = 10;
+    if fullscreen_active() {
+        return None;
+    }
     let ticks = RESERVE_TICKS.get() + 1;
     RESERVE_TICKS.set(ticks % CHECK_EVERY_TICKS);
     if !ticks.is_multiple_of(CHECK_EVERY_TICKS) {
