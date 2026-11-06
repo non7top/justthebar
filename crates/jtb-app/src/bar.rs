@@ -283,14 +283,15 @@ pub fn follow_fullscreen() -> Option<String> {
                 }
             });
             line = Some(format!(
-                "fullscreen: bar {:#x} {} on monitor {:?}",
+                "fullscreen: bar {:#x} {} on monitor {:?}; {}",
                 hwnd.0 as usize,
                 if behind {
                     "stepped back"
                 } else {
                     "back on top"
                 },
-                info.rcMonitor
+                info.rcMonitor,
+                jtb_win::fullscreen::describe_foreground()
             ));
         }
     }
