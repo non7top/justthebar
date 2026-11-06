@@ -6,8 +6,8 @@ use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic,
-    IsWindowVisible, GWL_STYLE, WS_CAPTION,
+    GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_STYLE, WS_CAPTION,
 };
 
 /// Window classes of the desktop and shell windows, which cover a monitor without being a
@@ -76,4 +76,24 @@ pub fn covered_monitor(ours: &[HWND]) -> Option<RECT> {
         && rc.right >= screen.right
         && rc.bottom >= screen.bottom)
         .then_some(screen)
+}
+
+/// The foreground window's class, title and process, for the log.
+pub fn describe_foreground() -> String {
+    let window = unsafe { GetForegroundWindow() };
+    if window.0.is_null() {
+        return "no foreground window".to_string();
+    }
+    let mut title = [0u16; 80];
+    let length = unsafe { GetWindowTextW(window, &mut title) };
+    let mut process = 0u32;
+    unsafe { GetWindowThreadProcessId(window, Some(&mut process)) };
+    let mut rc = RECT::default();
+    let _ = unsafe { GetWindowRect(window, &mut rc) };
+    format!(
+        "foreground {:#x} class {} title {:?} pid {process} at {rc:?}",
+        window.0 as usize,
+        class_of(window),
+        String::from_utf16_lossy(&title[..length.max(0) as usize])
+    )
 }

@@ -64,6 +64,7 @@ struct BarWindow {
 thread_local! {
     static BARS: RefCell<Vec<BarWindow>> = const { RefCell::new(Vec::new()) };
     static BEHIND_FULLSCREEN: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
+    static LAST_FULLSCREEN: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
     static RESERVE_TICKS: Cell<u32> = const { Cell::new(0) };
     static RESERVE_TRIES: Cell<u32> = const { Cell::new(0) };
 }
@@ -296,9 +297,17 @@ pub fn follow_fullscreen() -> Option<String> {
     line
 }
 
-/// True while a fullscreen window covers a monitor that has a bar.
+/// True while a fullscreen window covers a monitor that has a bar, and for a few seconds after:
+/// a game's window keeps losing and regaining the foreground while it starts, and shell changes
+/// made in those gaps (new work areas, bars made again) upset it.
 pub fn fullscreen_active() -> bool {
-    BEHIND_FULLSCREEN.with_borrow(|hidden| !hidden.is_empty())
+    let now = BEHIND_FULLSCREEN.with_borrow(|hidden| !hidden.is_empty());
+    if now {
+        LAST_FULLSCREEN.set(Some(std::time::Instant::now()));
+    }
+    now || LAST_FULLSCREEN
+        .get()
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(6))
 }
 
 /// Windows can reset the work area behind the bars' backs (a display change makes Explorer
