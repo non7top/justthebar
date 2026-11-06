@@ -3,9 +3,12 @@
 //! The app installs `jtb_hook_proc` as a one-shot WH_CALLWNDPROC hook on the flyout's thread and
 //! sends the attach command (1); the hook subclasses the window and the app removes the hook again.
 //! From then on the app talks to the subclass directly with the same registered message: 2 sets
-//! the position (x in the low 32 bits of lparam, y in the high 32, `i32::MIN` to keep the y the
-//! window asks for), 3 clears it, and any command is answered with 1, so the app can tell the
-//! subclass is there.
+//! the base position (x in the low 32 bits of lparam, y in the high 32, `i32::MIN` to keep the y
+//! the window asks for), 3 clears it, 5 sets the x limits (low and high 32 bits), 6 sets how many
+//! halves of the window's width and height are subtracted from the base (x in the low 32 bits, y
+//! in the high 32), and any command is answered with 1, so the app can tell the subclass is
+//! there. The window's size is read when it is placed, because a new flyout window has none
+//! before its first show.
 //!
 //! A loaded DLL stays in `ShellHost.exe`, so every build is a file named `jtb-hook-<hash>.dll` and
 //! takes its message name and subclass id from that hash: a newer build attaches next to an older
@@ -14,20 +17,22 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::OnceLock;
 
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
     GET_MODULE_HANDLE_EX_FLAG_PIN,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetClassNameW, RegisterWindowMessageW, CWPSTRUCT, SWP_NOMOVE, WINDOWPOS,
-    WM_NCDESTROY, WM_WINDOWPOSCHANGING,
+    CallNextHookEx, GetClassNameW, GetWindowRect, RegisterWindowMessageW, CWPSTRUCT, SWP_NOMOVE,
+    SWP_NOSIZE, WINDOWPOS, WM_NCDESTROY, WM_WINDOWPOSCHANGING,
 };
 
 const ATTACH: usize = 1;
 const SET: usize = 2;
 const CLEAR: usize = 3;
+const LIMITS: usize = 5;
+const HALVES: usize = 6;
 /// Sent as y when only x is wanted.
 const KEEP: i32 = i32::MIN;
 
@@ -35,6 +40,10 @@ static ANCHOR: u8 = 0;
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 static X: AtomicI32 = AtomicI32::new(0);
 static Y: AtomicI32 = AtomicI32::new(0);
+static LOW_X: AtomicI32 = AtomicI32::new(i32::MIN);
+static HIGH_X: AtomicI32 = AtomicI32::new(i32::MAX);
+static HALVES_X: AtomicI32 = AtomicI32::new(0);
+static HALVES_Y: AtomicI32 = AtomicI32::new(0);
 
 /// The registered message and the subclass id of this build.
 fn identity() -> (u32, usize) {
@@ -92,6 +101,14 @@ unsafe extern "system" fn subclass(
                 Y.store((lparam.0 >> 32) as i32, Ordering::Relaxed);
                 ACTIVE.store(true, Ordering::Release);
             }
+            LIMITS => {
+                LOW_X.store(lparam.0 as i32, Ordering::Relaxed);
+                HIGH_X.store((lparam.0 >> 32) as i32, Ordering::Relaxed);
+            }
+            HALVES => {
+                HALVES_X.store(lparam.0 as i32, Ordering::Relaxed);
+                HALVES_Y.store((lparam.0 >> 32) as i32, Ordering::Relaxed);
+            }
             CLEAR => ACTIVE.store(false, Ordering::Release),
             _ => {}
         }
@@ -106,10 +123,25 @@ unsafe extern "system" fn subclass(
     if msg == WM_WINDOWPOSCHANGING && ACTIVE.load(Ordering::Acquire) && lparam.0 != 0 {
         let pos = unsafe { &mut *(lparam.0 as *mut WINDOWPOS) };
         if pos.flags.0 & SWP_NOMOVE.0 == 0 {
-            pos.x = X.load(Ordering::Relaxed);
+            let mut current = RECT::default();
+            let _ = unsafe { GetWindowRect(window, &mut current) };
+            let width = if pos.flags.0 & SWP_NOSIZE.0 == 0 && pos.cx > 0 {
+                pos.cx
+            } else {
+                current.right - current.left
+            };
+            let height = if pos.flags.0 & SWP_NOSIZE.0 == 0 && pos.cy > 0 {
+                pos.cy
+            } else {
+                current.bottom - current.top
+            };
+            let x = X.load(Ordering::Relaxed) - width * HALVES_X.load(Ordering::Relaxed) / 2;
+            pos.x = x
+                .min(HIGH_X.load(Ordering::Relaxed).saturating_sub(width))
+                .max(LOW_X.load(Ordering::Relaxed));
             let y = Y.load(Ordering::Relaxed);
             if y != KEEP {
-                pos.y = y;
+                pos.y = y - height * HALVES_Y.load(Ordering::Relaxed) / 2;
             }
         }
     }

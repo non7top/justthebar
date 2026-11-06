@@ -15,6 +15,8 @@ const ATTACH: usize = 1;
 const SET: usize = 2;
 const CLEAR: usize = 3;
 const PING: usize = 4;
+const LIMITS: usize = 5;
+const HALVES: usize = 6;
 
 /// The staged DLL and the message its subclass listens to.
 struct Staged {
@@ -87,15 +89,39 @@ pub fn attach(window: HWND) -> Result<bool, String> {
     Ok(send(window, message, PING, 0) == 1)
 }
 
-/// The next time the flyout is positioned, it goes to `x` and, when given, `y`.
-pub fn set_position(window: HWND, x: i32, y: Option<i32>) {
+/// Where the flyout goes the next time it is positioned: `x_base` minus `x_halves` halves of its
+/// width, kept between `x_low` and `x_high` minus its width; `y_base` minus `y_halves` halves of
+/// its height, or the y it asks for when `None`.
+#[derive(Clone, Copy)]
+pub struct Placement {
+    pub x_base: i32,
+    pub x_halves: i32,
+    pub x_low: i32,
+    pub x_high: i32,
+    pub y_base: Option<i32>,
+    pub y_halves: i32,
+}
+
+pub fn set_position(window: HWND, placement: Placement) {
     if let Ok((_, message)) = staged() {
-        let y = y.unwrap_or(i32::MIN);
+        let pack = |low: i32, high: i32| ((i64::from(high) << 32) | i64::from(low as u32)) as isize;
+        send(
+            window,
+            message,
+            LIMITS,
+            pack(placement.x_low, placement.x_high),
+        );
+        send(
+            window,
+            message,
+            HALVES,
+            pack(placement.x_halves, placement.y_halves),
+        );
         send(
             window,
             message,
             SET,
-            ((i64::from(y) << 32) | i64::from(x as u32)) as isize,
+            pack(placement.x_base, placement.y_base.unwrap_or(i32::MIN)),
         );
     }
 }

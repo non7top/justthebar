@@ -74,18 +74,20 @@ fn aim_hook(anchor: &Anchor) {
             Ok(true) => {
                 let mut rect = RECT::default();
                 if unsafe { GetWindowRect(window, &mut rect) }.is_ok() {
-                    let (x, y) = target_for(anchor, &rect);
                     let side = matches!(anchor.edge, Edge::Left | Edge::Right);
-                    hookdll::set_position(window, x, (!side).then_some(y));
+                    hookdll::set_position(window, placement(anchor));
                     HOOKED.set(true);
                     let visible = unsafe { IsWindowVisible(window) }.as_bool();
                     let hidden = cloaked(window);
+                    let (x, y) = target_for(anchor, &rect);
                     let mut note = format!(
                         "window {:#x} of {}: at {rect:?}, visible {visible}, cloaked {hidden}, target ({x}, {y})",
                         window.0 as usize,
                         windows.len()
                     );
-                    if !visible || hidden {
+                    // A new window has no size yet; the hook places it from its size at the show.
+                    let sized = rect.right > rect.left && rect.bottom > rect.top;
+                    if (!visible || hidden) && sized {
                         // On the first open the shell shows the window where it was parked, so
                         // the hidden window is parked at the target.
                         let moved = unsafe {
@@ -192,6 +194,26 @@ fn visible_flyout() -> Option<HWND> {
         }
     }
     None
+}
+
+fn placement(anchor: &Anchor) -> hookdll::Placement {
+    let margin = 12 * unsafe { GetDpiForWindow(anchor.window) } as i32 / 96;
+    let (bar, monitor, click) = (anchor.bar, anchor.monitor, anchor.click);
+    let (x_low, x_high) = (monitor.left + margin, monitor.right - margin);
+    let (x_base, x_halves, y_base, y_halves) = match anchor.edge {
+        Edge::Right => (bar.left - margin, 2, None, 0),
+        Edge::Left => (bar.right + margin, 0, None, 0),
+        Edge::Bottom => (click.x, 1, Some(bar.top - margin), 2),
+        Edge::Top => (click.x, 1, Some(bar.bottom + margin), 0),
+    };
+    hookdll::Placement {
+        x_base,
+        x_halves,
+        x_low,
+        x_high,
+        y_base,
+        y_halves,
+    }
 }
 
 fn target_for(anchor: &Anchor, rect: &RECT) -> (i32, i32) {
