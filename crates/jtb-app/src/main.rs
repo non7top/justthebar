@@ -1556,6 +1556,7 @@ fn main() -> Result<()> {
         SetTimer(Some(control), TIMER_WIDGETS, 100, None);
         SetTimer(Some(control), TIMER_CONFIG, 1000, None);
         SetTimer(Some(control), TIMER_ZORDER, 200, None);
+        jtb_win::fullscreen::watch_focus(log);
         if let Some(secs) = args.quit_after_secs {
             SetTimer(Some(control), TIMER_QUIT, secs * 1000, None);
         }
@@ -1661,7 +1662,12 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         // A game changing the video mode sends a burst of these, some while `apply` is waiting on
         // Explorer; laying out the bars in each of them stacked duplicate bars.
         WM_DISPLAYCHANGE => {
-            log("display change");
+            log(&format!(
+                "display change to {}x{}, {} bits",
+                lparam.0 & 0xffff,
+                (lparam.0 >> 16) & 0xffff,
+                wparam.0
+            ));
             unsafe { SetTimer(Some(hwnd), TIMER_DISPLAY, DISPLAY_SETTLE_MS, None) };
             LRESULT(0)
         }

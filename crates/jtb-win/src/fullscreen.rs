@@ -1,13 +1,18 @@
 //! Finds the monitor taken over by a fullscreen window (a video in a browser, a game), so the
 //! bars on it can step back.
+use std::sync::OnceLock;
+
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL,
 };
+use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, GWL_STYLE, WS_CAPTION,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, EVENT_SYSTEM_FOREGROUND,
+    EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, GWL_STYLE, OBJID_WINDOW,
+    WINEVENT_OUTOFCONTEXT, WS_CAPTION,
 };
 
 /// Window classes of the desktop and shell windows, which cover a monitor without being a
@@ -84,6 +89,10 @@ pub fn describe_foreground() -> String {
     if window.0.is_null() {
         return "no foreground window".to_string();
     }
+    describe(window)
+}
+
+fn describe(window: HWND) -> String {
     let mut title = [0u16; 80];
     let length = unsafe { GetWindowTextW(window, &mut title) };
     let mut process = 0u32;
@@ -91,9 +100,54 @@ pub fn describe_foreground() -> String {
     let mut rc = RECT::default();
     let _ = unsafe { GetWindowRect(window, &mut rc) };
     format!(
-        "foreground {:#x} class {} title {:?} pid {process} at {rc:?}",
+        "window {:#x} class {} title {:?} pid {process} at {rc:?}",
         window.0 as usize,
         class_of(window),
         String::from_utf16_lossy(&title[..length.max(0) as usize])
     )
+}
+
+static SINK: OnceLock<fn(&str)> = OnceLock::new();
+
+unsafe extern "system" fn on_event(
+    _hook: HWINEVENTHOOK,
+    event: u32,
+    window: HWND,
+    object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    let Some(sink) = SINK.get() else {
+        return;
+    };
+    if object != OBJID_WINDOW.0 {
+        return;
+    }
+    let what = match event {
+        EVENT_SYSTEM_FOREGROUND if window.0.is_null() => {
+            return sink("focus: no foreground window");
+        }
+        EVENT_SYSTEM_FOREGROUND => "focus: now",
+        EVENT_SYSTEM_MINIMIZESTART => "focus: minimized",
+        EVENT_SYSTEM_MINIMIZEEND => "focus: restored",
+        _ => return,
+    };
+    sink(&format!("{what} {}", describe(window)));
+}
+
+/// Reports foreground changes and minimizing to `sink`, for finding what takes focus from a game.
+/// The calling thread needs a message loop.
+pub fn watch_focus(sink: fn(&str)) {
+    if SINK.set(sink).is_err() {
+        return;
+    }
+    for (low, high) in [
+        (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
+        (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
+    ] {
+        unsafe {
+            SetWinEventHook(low, high, None, Some(on_event), 0, 0, WINEVENT_OUTOFCONTEXT);
+        }
+    }
 }
