@@ -331,6 +331,7 @@ pub fn ensure_reserved() -> Option<String> {
     }
     let bars: Vec<(HWND, AppBar)> =
         BARS.with_borrow(|bars| bars.iter().map(|b| (b.hwnd, b.bar)).collect());
+    let mut placed = Vec::new();
     let mut unreserved = Vec::new();
     for (hwnd, bar) in bars {
         let mut rect = RECT::default();
@@ -345,10 +346,11 @@ pub fn ensure_reserved() -> Option<String> {
             continue;
         }
         let work = info.rcWork;
+        placed.push((bar, rect, info.rcMonitor));
         let overlap_x = rect.right.min(work.right) - rect.left.max(work.left);
         let overlap_y = rect.bottom.min(work.bottom) - rect.top.max(work.top);
         if overlap_x > 8 && overlap_y > 8 {
-            unreserved.push((bar, rect, work));
+            unreserved.push((bar, rect, work, info.rcMonitor));
         }
     }
     if unreserved.is_empty() {
@@ -361,20 +363,36 @@ pub fn ensure_reserved() -> Option<String> {
     if tries >= 6 && !tries.is_multiple_of(15) {
         return None;
     }
-    let lines: Vec<String> = unreserved
-        .into_iter()
-        .map(|(bar, rect, work)| {
-            let done = if tries == 0 {
-                bar.set_pos()
-            } else {
-                bar.rebuild()
-            };
-            format!(
-                "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
-                tries + 1
-            )
-        })
-        .collect();
+    let mut lines = Vec::new();
+    let mut done_monitors: Vec<RECT> = Vec::new();
+    for (bar, rect, work, monitor) in unreserved {
+        let done = match tries {
+            0 => bar.set_pos(),
+            1 => bar.rebuild(),
+            // Explorer ignored both: set the work area ourselves, once per monitor.
+            _ if done_monitors.contains(&monitor) => continue,
+            _ => {
+                done_monitors.push(monitor);
+                let mut area = monitor;
+                for (other, other_rect, other_monitor) in &placed {
+                    if *other_monitor != monitor {
+                        continue;
+                    }
+                    match other.edge() {
+                        Edge::Top => area.top = area.top.max(other_rect.bottom),
+                        Edge::Bottom => area.bottom = area.bottom.min(other_rect.top),
+                        Edge::Left => area.left = area.left.max(other_rect.right),
+                        Edge::Right => area.right = area.right.min(other_rect.left),
+                    }
+                }
+                jtb_win::appbar::set_work_area(area)
+            }
+        };
+        lines.push(format!(
+            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
+            tries + 1
+        ));
+    }
     Some(lines.join("\n"))
 }
 

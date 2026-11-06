@@ -10,9 +10,24 @@ use windows::Win32::UI::Shell::{
     ABM_REMOVE, ABM_SETPOS, ABM_WINDOWPOSCHANGED, ABN_FULLSCREENAPP, ABN_POSCHANGED, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, RegisterWindowMessageW, SetWindowPos, HWND_BOTTOM, HWND_TOPMOST, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE,
+    GetWindowRect, RegisterWindowMessageW, SetWindowPos, SystemParametersInfoW, HWND_BOTTOM,
+    HWND_TOPMOST, SPIF_SENDCHANGE, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
+
+/// Sets the work area of the monitor that contains `area` directly, for when Explorer ignores the
+/// appbar messages. Not saved to the user profile.
+pub fn set_work_area(area: RECT) -> String {
+    let mut rc = area;
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_SETWORKAREA,
+            0,
+            Some(&mut rc as *mut RECT as *mut std::ffi::c_void),
+            SPIF_SENDCHANGE,
+        )
+    };
+    format!("work area set to {area:?}: {result:?}")
+}
 
 #[derive(Clone, Copy)]
 pub struct AppBar {
