@@ -1578,7 +1578,12 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         WM_TIMER => {
             match wparam.0 {
                 TIMER_HIDE_EXPLORER => {
-                    if explorer::enforce_hidden() {
+                    for line in explorer::quiet_open_shell_buttons() {
+                        log(&line);
+                    }
+                    // Explorer keeps its taskbar out of a fullscreen app's way; hiding and
+                    // showing it again meanwhile set off display changes in a game.
+                    if !bar::fullscreen_active() && explorer::enforce_hidden() {
                         log("explorer taskbar was visible, hid it again");
                     }
                 }

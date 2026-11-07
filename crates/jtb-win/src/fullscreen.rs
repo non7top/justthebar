@@ -17,12 +17,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// Window classes of the desktop and shell windows, which cover a monitor without being a
 /// fullscreen app.
-const SHELL_CLASSES: [&str; 5] = [
+const SHELL_CLASSES: [&str; 8] = [
     "Progman",
     "WorkerW",
     "Shell_TrayWnd",
     "Shell_SecondaryTrayWnd",
     "ControlCenterWindow",
+    "XamlExplorerHostIslandWindow",
+    "MultitaskingViewFrame",
+    "TaskSwitcherWnd",
 ];
 
 fn class_of(window: HWND) -> String {
