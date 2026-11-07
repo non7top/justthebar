@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use jtb_core::buttons::{bar_layout_with_widgets, hit_test, tray_icon_rect, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
@@ -31,10 +31,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::log;
 
-const VK_ESCAPE: usize = 0x1B;
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 /// Repaints the Start button while its hot frame fades in or out.
+const VK_ESCAPE: usize = 0x1B;
 const TIMER_START_FADE: usize = 1;
 const FADE_TICK_MS: u32 = 30;
 /// Fraction of the fade done per tick: 30 ms of 300 ms, as in Open-Shell.
@@ -63,6 +63,10 @@ struct BarWindow {
 
 thread_local! {
     static BARS: RefCell<Vec<BarWindow>> = const { RefCell::new(Vec::new()) };
+    static BEHIND_FULLSCREEN: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
+    static LAST_FULLSCREEN: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+    static RESERVE_TICKS: Cell<u32> = const { Cell::new(0) };
+    static RESERVE_TRIES: Cell<u32> = const { Cell::new(0) };
 }
 
 /// A bar to create: its config, the monitor index it resolved to, and that monitor's rect.
@@ -202,6 +206,9 @@ pub fn destroy_all() {
 pub fn keep_above_explorer() {
     let hwnds: Vec<HWND> = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect());
     for &hwnd in &hwnds {
+        if BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd)) {
+            continue;
+        }
         if jtb_win::explorer::tray_above(hwnd, &hwnds) {
             unsafe {
                 let _ = SetWindowPos(
@@ -216,6 +223,177 @@ pub fn keep_above_explorer() {
             }
         }
     }
+}
+
+/// Puts the bars on a monitor that a fullscreen window covers behind it, and back on top when
+/// the window goes. Returns a line for the log when a bar changed sides.
+pub fn follow_fullscreen() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_EXSTYLE, HWND_BOTTOM, WS_EX_TOPMOST,
+    };
+    let hwnds: Vec<HWND> = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect());
+    let covered = jtb_win::fullscreen::covered_monitor(&hwnds);
+    let mut line = None;
+    for &hwnd in &hwnds {
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+            continue;
+        }
+        let behind = covered == Some(info.rcMonitor);
+        let was = BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd));
+        let topmost = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+        if behind && (!was || topmost) {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_BOTTOM),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        } else if !behind && was {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+        }
+        if behind != was {
+            BEHIND_FULLSCREEN.with_borrow_mut(|hidden| {
+                if behind {
+                    hidden.push(hwnd);
+                } else {
+                    hidden.retain(|h| *h != hwnd);
+                }
+            });
+            line = Some(format!(
+                "fullscreen: bar {:#x} {} on monitor {:?}; {}",
+                hwnd.0 as usize,
+                if behind {
+                    "stepped back"
+                } else {
+                    "back on top"
+                },
+                info.rcMonitor,
+                jtb_win::fullscreen::describe_foreground()
+            ));
+        }
+    }
+    line
+}
+
+/// True while a fullscreen window covers a monitor that has a bar, and for a few seconds after:
+/// a game's window keeps losing and regaining the foreground while it starts, and shell changes
+/// made in those gaps (new work areas, bars made again) upset it.
+pub fn fullscreen_active() -> bool {
+    let now = BEHIND_FULLSCREEN.with_borrow(|hidden| !hidden.is_empty());
+    if now {
+        LAST_FULLSCREEN.set(Some(std::time::Instant::now()));
+    }
+    now || LAST_FULLSCREEN
+        .get()
+        .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(6))
+}
+
+/// Windows can reset the work area behind the bars' backs (a display change makes Explorer
+/// recompute it), after which maximized windows cover the bars. Checks every few seconds that each
+/// bar's strip is outside its monitor's work area; if not, reserves it again, first with a new
+/// position and, when that did not help, by removing the registration and making it again. Returns a line for the log.
+pub fn ensure_reserved() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    const CHECK_EVERY_TICKS: u32 = 10;
+    if fullscreen_active() {
+        return None;
+    }
+    let ticks = RESERVE_TICKS.get() + 1;
+    RESERVE_TICKS.set(ticks % CHECK_EVERY_TICKS);
+    if !ticks.is_multiple_of(CHECK_EVERY_TICKS) {
+        return None;
+    }
+    let bars: Vec<(HWND, AppBar)> =
+        BARS.with_borrow(|bars| bars.iter().map(|b| (b.hwnd, b.bar)).collect());
+    let mut placed = Vec::new();
+    let mut unreserved = Vec::new();
+    for (hwnd, bar) in bars {
+        let mut rect = RECT::default();
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err()
+            || !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool()
+        {
+            continue;
+        }
+        let work = info.rcWork;
+        placed.push((bar, rect, info.rcMonitor));
+        let overlap_x = rect.right.min(work.right) - rect.left.max(work.left);
+        let overlap_y = rect.bottom.min(work.bottom) - rect.top.max(work.top);
+        if overlap_x > 8 && overlap_y > 8 {
+            unreserved.push((bar, rect, work, info.rcMonitor));
+        }
+    }
+    if unreserved.is_empty() {
+        RESERVE_TRIES.set(0);
+        return None;
+    }
+    let tries = RESERVE_TRIES.get();
+    RESERVE_TRIES.set(tries + 1);
+    // After a few failures, only look again every 30 s.
+    if tries >= 6 && !tries.is_multiple_of(15) {
+        return None;
+    }
+    let mut lines = Vec::new();
+    let mut done_monitors: Vec<RECT> = Vec::new();
+    for (bar, rect, work, monitor) in unreserved {
+        let done = match tries {
+            0 => bar.set_pos(),
+            1 => bar.rebuild(),
+            // Explorer ignored both: set the work area ourselves, once per monitor.
+            _ if done_monitors.contains(&monitor) => continue,
+            _ => {
+                done_monitors.push(monitor);
+                let mut area = monitor;
+                for (other, other_rect, other_monitor) in &placed {
+                    if *other_monitor != monitor {
+                        continue;
+                    }
+                    match other.edge() {
+                        Edge::Top => area.top = area.top.max(other_rect.bottom),
+                        Edge::Bottom => area.bottom = area.bottom.min(other_rect.top),
+                        Edge::Left => area.left = area.left.max(other_rect.right),
+                        Edge::Right => area.right = area.right.min(other_rect.left),
+                    }
+                }
+                jtb_win::appbar::set_work_area(area)
+            }
+        };
+        lines.push(format!(
+            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
+            tries + 1
+        ));
+    }
+    Some(lines.join("\n"))
 }
 
 pub fn invalidate_all() {
@@ -261,6 +439,30 @@ pub fn flyout_anchor() -> Option<jtb_win::flyout::Anchor> {
             })
         })
     })
+}
+
+/// A lone press of the Windows key: opens the Start menu from the Start button of the bar on the
+/// monitor under the cursor, or of the first bar when none is there.
+pub fn press_start_at_cursor() {
+    use windows::Win32::Graphics::Gdi::{
+        MonitorFromPoint, MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut cursor = POINT::default();
+    let _ = unsafe { GetCursorPos(&mut cursor) };
+    let monitor = unsafe { MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST) };
+    let Some((hwnd, bar)) = BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| unsafe { MonitorFromWindow(b.hwnd, MONITOR_DEFAULTTONEAREST) } == monitor)
+            .or(bars.first())
+            .map(|b| (b.hwnd, b.bar))
+    }) else {
+        return;
+    };
+    if crate::start_enabled() {
+        note_start_rect(hwnd, bar);
+        crate::click_row(task_monitor_of(hwnd), 0, Button::Left);
+    }
 }
 
 fn bar_for(hwnd: HWND) -> Option<AppBar> {
@@ -677,6 +879,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         "TaskbarCreated: bar registered again {}",
                         bar.reregister()
                     ));
+                    log(&jtb_win::explorer::hide_minimized_windows());
                 }
                 LRESULT(0)
             }

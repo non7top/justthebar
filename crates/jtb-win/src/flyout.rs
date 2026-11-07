@@ -66,30 +66,46 @@ fn all_flyouts() -> Vec<HWND> {
 /// shown. Logs the first outcome and each change of it.
 fn aim_hook(anchor: &Anchor) {
     HOOKED.set(false);
-    for window in all_flyouts() {
-        let state = match hookdll::attach(window) {
+    let windows = all_flyouts();
+    for window in &windows {
+        let window = *window;
+        let attached = hookdll::attach(window);
+        let state = match &attached {
             Ok(true) => {
                 let mut rect = RECT::default();
                 if unsafe { GetWindowRect(window, &mut rect) }.is_ok() {
-                    let (x, y) = target_for(anchor, &rect);
                     let side = matches!(anchor.edge, Edge::Left | Edge::Right);
-                    hookdll::set_position(window, x, (!side).then_some(y));
+                    hookdll::set_position(window, placement(anchor));
                     HOOKED.set(true);
-                    if !unsafe { IsWindowVisible(window) }.as_bool() {
-                        // On the first open the shell shows the window where it was parked
-                        // without moving it, so there is nothing for the hook to rewrite.
-                        let _ = unsafe {
+                    let visible = unsafe { IsWindowVisible(window) }.as_bool();
+                    let hidden = cloaked(window);
+                    let (x, y) = target_for(anchor, &rect);
+                    let mut note = format!(
+                        "window {:#x} of {}: at {rect:?}, visible {visible}, cloaked {hidden}, target ({x}, {y})",
+                        window.0 as usize,
+                        windows.len()
+                    );
+                    // A new window has no size yet; the hook places it from its size at the show.
+                    let sized = rect.right > rect.left && rect.bottom > rect.top;
+                    if (!visible || hidden) && sized {
+                        // On the first open the shell shows the window where it was parked, so
+                        // the hidden window is parked at the target.
+                        let moved = unsafe {
                             SetWindowPos(
                                 window,
                                 None,
-                                rect.left,
-                                rect.top,
+                                x,
+                                if side { rect.top } else { y },
                                 0,
                                 0,
                                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
                             )
                         };
+                        let mut after = RECT::default();
+                        let _ = unsafe { GetWindowRect(window, &mut after) };
+                        note += &format!(", pre-move {moved:?}, now at {after:?}");
                     }
+                    LINES.with_borrow_mut(|lines| lines.push(format!("flyout: {note}")));
                 }
                 "placing the flyout from inside ShellHost".to_string()
             }
@@ -178,6 +194,26 @@ fn visible_flyout() -> Option<HWND> {
         }
     }
     None
+}
+
+fn placement(anchor: &Anchor) -> hookdll::Placement {
+    let margin = 12 * unsafe { GetDpiForWindow(anchor.window) } as i32 / 96;
+    let (bar, monitor, click) = (anchor.bar, anchor.monitor, anchor.click);
+    let (x_low, x_high) = (monitor.left + margin, monitor.right - margin);
+    let (x_base, x_halves, y_base, y_halves) = match anchor.edge {
+        Edge::Right => (bar.left - margin, 2, None, 0),
+        Edge::Left => (bar.right + margin, 0, None, 0),
+        Edge::Bottom => (click.x, 1, Some(bar.top - margin), 2),
+        Edge::Top => (click.x, 1, Some(bar.bottom + margin), 0),
+    };
+    hookdll::Placement {
+        x_base,
+        x_halves,
+        x_low,
+        x_high,
+        y_base,
+        y_halves,
+    }
 }
 
 fn target_for(anchor: &Anchor, rect: &RECT) -> (i32, i32) {
