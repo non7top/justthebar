@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use jtb_core::icon::{finish_pixels, Icon};
 use jtb_core::tasks::Task;
 use windows::core::{w, BOOL, HSTRING, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, GetLastError, HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
@@ -16,14 +16,14 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW, GetForegroundWindow,
-    GetGUIThreadInfo, GetIconInfo, GetPropW, GetWindow, GetWindowLongPtrW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
+    AllowSetForegroundWindow, DestroyIcon, EnumWindows, GetClassLongPtrW, GetClassNameW,
+    GetForegroundWindow, GetGUIThreadInfo, GetIconInfo, GetPropW, GetWindow, GetWindowLongPtrW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, PostMessageW,
     RegisterShellHookWindow, RegisterWindowMessageW, SendMessageTimeoutW, SetForegroundWindow,
     ShowWindowAsync, GCLP_HICON, GCLP_HICONSM, GUITHREADINFO, GWL_EXSTYLE, GW_OWNER, HICON,
-    ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SMTO_ABORTIFHUNG, SW_MINIMIZE, SW_RESTORE,
-    SW_SHOWNORMAL, WM_CLOSE, WM_GETICON, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_WINDOWEDGE,
+    ICONINFO, ICON_BIG, ICON_SMALL, ICON_SMALL2, SC_MINIMIZE, SC_RESTORE, SMTO_ABORTIFHUNG,
+    SW_MINIMIZE, SW_RESTORE, SW_SHOWNORMAL, WM_CLOSE, WM_GETICON, WM_SYSCOMMAND, WS_EX_APPWINDOW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_WINDOWEDGE,
 };
 
 // Shell hook codes (wParam of the SHELLHOOK message; lParam is the window).
@@ -206,16 +206,52 @@ pub fn close(id: isize) {
 }
 
 /// Button click: restore a minimized window, minimize the active one, otherwise bring to front.
-pub fn activate_or_minimize(id: isize, is_active: bool) {
+/// Returns what was tried, for the log.
+///
+/// The window gets the system command a title bar button sends, as Cairo does. A window running
+/// elevated may refuse `ShowWindowAsync` from this process.
+pub fn activate_or_minimize(id: isize, is_active: bool) -> String {
     let hwnd = hwnd_of(id);
+    let mut process = 0u32;
     unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut process));
+        let _ = AllowSetForegroundWindow(process);
         if IsIconic(hwnd).as_bool() {
-            let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+            let mut result = 0usize;
+            let sent = SendMessageTimeoutW(
+                hwnd,
+                WM_SYSCOMMAND,
+                WPARAM(SC_RESTORE as usize),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG,
+                200,
+                Some(&mut result),
+            );
+            let note = if sent.0 == 0 {
+                let error = GetLastError();
+                let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+                format!("restore command failed ({error:?}), asked ShowWindowAsync instead")
+            } else {
+                "restore command sent".to_string()
+            };
             let _ = SetForegroundWindow(hwnd);
+            note
         } else if is_active {
-            let _ = ShowWindowAsync(hwnd, SW_MINIMIZE);
+            match PostMessageW(
+                Some(hwnd),
+                WM_SYSCOMMAND,
+                WPARAM(SC_MINIMIZE as usize),
+                LPARAM(0),
+            ) {
+                Ok(()) => "minimize command posted".to_string(),
+                Err(error) => {
+                    let _ = ShowWindowAsync(hwnd, SW_MINIMIZE);
+                    format!("minimize command failed ({error}), asked ShowWindowAsync instead")
+                }
+            }
         } else {
             let _ = SetForegroundWindow(hwnd);
+            "brought to front".to_string()
         }
     }
 }

@@ -1073,10 +1073,13 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
                     view.active,
                     tasks::gui_active()
                 ));
-                tasks::activate_or_minimize(*id, active);
+                let note = tasks::activate_or_minimize(*id, active);
+                log(&format!("click: window {id}: {note}"));
             }
             Click::Header { windows, .. } => match windows.first() {
-                Some(id) => tasks::activate_or_minimize(*id, false),
+                Some(id) => {
+                    tasks::activate_or_minimize(*id, false);
+                }
                 None => launch_click(&click, &pins),
             },
             Click::Start => {}
