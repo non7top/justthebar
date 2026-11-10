@@ -282,13 +282,19 @@ fn on_tray_packet(data: &[u8]) -> bool {
     if packet.is_shell_status_icon() {
         return false;
     }
-    // An app that deleted its icon may keep modifying it; Explorer has no such icon, so refuse.
-    if packet.is_modify() && TRAY_ICONS.with_borrow(|icons| icons.was_deleted(packet.key())) {
-        log(&format!(
-            "tray: modify of a deleted icon refused owner={owner} id={}",
-            packet.id
-        ));
-        return false;
+    // Explorer ignores a modify of an icon it does not hold (one the app deleted or never added).
+    if packet.is_modify() {
+        let key = packet.key();
+        let (deleted, known) =
+            TRAY_ICONS.with_borrow(|icons| (icons.was_deleted(key), icons.knows(key)));
+        if deleted || !known {
+            let what = if deleted { "a deleted" } else { "an unknown" };
+            log(&format!(
+                "tray: modify of {what} icon refused owner={owner} id={}",
+                packet.id
+            ));
+            return false;
+        }
     }
     let icon = if valid && packet.wants_icon() {
         let id = next_icon_id();

@@ -10,24 +10,9 @@ use windows::Win32::UI::Shell::{
     ABM_REMOVE, ABM_SETPOS, ABM_WINDOWPOSCHANGED, ABN_FULLSCREENAPP, ABN_POSCHANGED, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, RegisterWindowMessageW, SetWindowPos, SystemParametersInfoW, HWND_BOTTOM,
-    HWND_TOPMOST, SPIF_SENDCHANGE, SPI_SETWORKAREA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    GetWindowRect, RegisterWindowMessageW, SetWindowPos, HWND_BOTTOM, HWND_TOPMOST, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE,
 };
-
-/// Sets the work area of the monitor that contains `area` directly, for when Explorer ignores the
-/// appbar messages. Not saved to the user profile.
-pub fn set_work_area(area: RECT) -> String {
-    let mut rc = area;
-    let result = unsafe {
-        SystemParametersInfoW(
-            SPI_SETWORKAREA,
-            0,
-            Some(&mut rc as *mut RECT as *mut std::ffi::c_void),
-            SPIF_SENDCHANGE,
-        )
-    };
-    format!("work area set to {area:?}: {result:?}")
-}
 
 #[derive(Clone, Copy)]
 pub struct AppBar {
@@ -88,6 +73,20 @@ impl AppBar {
 
     pub fn edge(&self) -> Edge {
         self.edge
+    }
+
+    pub fn window(&self) -> HWND {
+        self.hwnd
+    }
+
+    /// What Explorer offers `other` for this bar's edge of its monitor. Smaller than the monitor
+    /// when Explorer holds this bar's registration.
+    pub fn probe(&self, other: HWND) -> RECT {
+        let mut abd = data(other);
+        abd.uEdge = abe(self.edge);
+        abd.rc = self.monitor;
+        unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut abd) };
+        abd.rc
     }
 
     pub fn callback_message(&self) -> u32 {
@@ -233,8 +232,8 @@ impl AppBar {
     pub fn reregister(&self) -> String {
         let mut abd = data(self.hwnd);
         abd.uCallbackMessage = self.callback_message;
-        unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
-        self.set_pos()
+        let registered = unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
+        format!("registration answer {registered}; {}", self.set_pos())
     }
 
     /// Removes the registration and makes it again, which makes Explorer work out the work area

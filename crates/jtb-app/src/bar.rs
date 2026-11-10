@@ -331,7 +331,6 @@ pub fn ensure_reserved() -> Option<String> {
     }
     let bars: Vec<(HWND, AppBar)> =
         BARS.with_borrow(|bars| bars.iter().map(|b| (b.hwnd, b.bar)).collect());
-    let mut placed = Vec::new();
     let mut unreserved = Vec::new();
     for (hwnd, bar) in bars {
         let mut rect = RECT::default();
@@ -346,7 +345,6 @@ pub fn ensure_reserved() -> Option<String> {
             continue;
         }
         let work = info.rcWork;
-        placed.push((bar, rect, info.rcMonitor));
         let overlap_x = rect.right.min(work.right) - rect.left.max(work.left);
         let overlap_y = rect.bottom.min(work.bottom) - rect.top.max(work.top);
         if overlap_x > 8 && overlap_y > 8 {
@@ -363,33 +361,24 @@ pub fn ensure_reserved() -> Option<String> {
     if tries >= 6 && !tries.is_multiple_of(15) {
         return None;
     }
+    let probe_window = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect::<Vec<_>>());
     let mut lines = Vec::new();
-    let mut done_monitors: Vec<RECT> = Vec::new();
     for (bar, rect, work, monitor) in unreserved {
-        let done = match tries {
-            0 => bar.set_pos(),
-            1 => bar.rebuild(),
-            // Explorer ignored both: set the work area ourselves, once per monitor.
-            _ if done_monitors.contains(&monitor) => continue,
-            _ => {
-                done_monitors.push(monitor);
-                let mut area = monitor;
-                for (other, other_rect, other_monitor) in &placed {
-                    if *other_monitor != monitor {
-                        continue;
-                    }
-                    match other.edge() {
-                        Edge::Top => area.top = area.top.max(other_rect.bottom),
-                        Edge::Bottom => area.bottom = area.bottom.min(other_rect.top),
-                        Edge::Left => area.left = area.left.max(other_rect.right),
-                        Edge::Right => area.right = area.right.min(other_rect.left),
-                    }
-                }
-                jtb_win::appbar::set_work_area(area)
-            }
+        let done = if tries == 0 {
+            bar.set_pos()
+        } else {
+            bar.rebuild()
         };
+        // Another window asks for the same edge: Explorer answers with a smaller rectangle only
+        // when it holds this bar's registration.
+        let other = probe_window
+            .iter()
+            .copied()
+            .find(|w| *w != bar.window())
+            .unwrap_or_default();
+        let seen = bar.probe(other);
         lines.push(format!(
-            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}",
+            "reserve: bar {rect:?} lies inside the work area {work:?}, reserved again (try {}): {done}; monitor {monitor:?}, another window asking for the edge gets {seen:?}",
             tries + 1
         ));
     }
