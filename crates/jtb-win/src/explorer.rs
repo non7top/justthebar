@@ -9,10 +9,12 @@ use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, ABS_ALWAYSONTOP, ABS_AUTOHIDE, APPBARDATA,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowPos,
-    SystemParametersInfoW, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM, HWND_TOPMOST, SPI_GETWORKAREA,
-    SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_TOPMOST,
+    FindWindowExW, GetWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW,
+    SetWindowPos, SystemParametersInfoW, ARW_HIDE, GWL_EXSTYLE, GW_HWNDPREV, HWND_BOTTOM,
+    HWND_TOPMOST, MINIMIZEDMETRICS, MINIMIZEDMETRICS_ARRANGE, SPI_GETMINIMIZEDMETRICS,
+    SPI_GETWORKAREA, SPI_SETMINIMIZEDMETRICS, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_SHOWWINDOW, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WS_EX_NOACTIVATE,
+    WS_EX_TOPMOST,
 };
 
 const UNSET: u32 = u32::MAX;
@@ -108,6 +110,45 @@ pub fn startup_autohide() -> bool {
     startup_state().is_some_and(|state| state & ABS_AUTOHIDE != 0)
 }
 
+thread_local! {
+    static QUIETED: std::cell::RefCell<Vec<isize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Open-Shell's own Start button windows (in Explorer) took the foreground from a fullscreen game
+/// on every display change; a no-activate style keeps them from being activated. Returns a line
+/// for each window seen for the first time.
+pub fn quiet_open_shell_buttons() -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut after: Option<HWND> = None;
+    while let Ok(window) =
+        unsafe { FindWindowExW(None, after, w!("OpenShell.CStartButton"), PCWSTR::null()) }
+    {
+        after = Some(window);
+        let flag = WS_EX_NOACTIVATE.0 as isize;
+        let style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+        if style & flag != 0 {
+            continue;
+        }
+        unsafe { SetWindowLongPtrW(window, GWL_EXSTYLE, style | flag) };
+        let now = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) };
+        let id = window.0 as isize;
+        let first = QUIETED.with_borrow_mut(|seen| {
+            let new = !seen.contains(&id);
+            if new {
+                seen.push(id);
+            }
+            new
+        });
+        if first {
+            let result = if now & flag != 0 { "set" } else { "refused" };
+            lines.push(format!(
+                "open-shell start button {id:#x}: no-activate style {result}"
+            ));
+        }
+    }
+    lines
+}
+
 /// Hides the taskbar again if Explorer brought it back (it does so when appbars change).
 pub fn enforce_hidden() -> bool {
     let visible = all_trays()
@@ -142,6 +183,41 @@ pub fn snapshot() -> String {
         work_area(),
         crate::monitors::describe_work_areas()
     )
+}
+
+/// Makes windows that get minimized vanish into the bar instead of becoming small caption bars on
+/// the desktop (Explorer sets this when it starts as the shell). Returns a line for the log.
+pub fn hide_minimized_windows() -> String {
+    let size = size_of::<MINIMIZEDMETRICS>() as u32;
+    let mut metrics = MINIMIZEDMETRICS {
+        cbSize: size,
+        ..Default::default()
+    };
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETMINIMIZEDMETRICS,
+            size,
+            Some(&mut metrics as *mut MINIMIZEDMETRICS as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    if read.is_err() {
+        return "minimized windows: cannot read the arrangement".to_string();
+    }
+    let before = metrics.iArrange.0;
+    if before & ARW_HIDE != 0 {
+        return format!("minimized windows: already hidden (arrange {before})");
+    }
+    metrics.iArrange = MINIMIZEDMETRICS_ARRANGE(before | ARW_HIDE);
+    let set = unsafe {
+        SystemParametersInfoW(
+            SPI_SETMINIMIZEDMETRICS,
+            size,
+            Some(&mut metrics as *mut MINIMIZEDMETRICS as *mut c_void),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    format!("minimized windows: arrange was {before}, set to hidden: {set:?}")
 }
 
 pub fn work_area() -> RECT {

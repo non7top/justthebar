@@ -42,9 +42,13 @@ const TIMER_CLOCK: usize = 3;
 const TIMER_WIDGETS: usize = 9;
 const TIMER_CONFIG: usize = 4;
 const TIMER_ZORDER: usize = 7;
+const TIMER_DISPLAY: usize = 8;
+/// How long the displays must stay quiet before the bars are laid out again.
+const DISPLAY_SETTLE_MS: u32 = 1000;
 
 const WM_APP_RESTART: u32 = 0x8001;
 const WM_APP_QUIT: u32 = 0x8002;
+const WM_APP_WINKEY: u32 = 0x8003;
 
 struct State {
     config: Config,
@@ -67,6 +71,10 @@ thread_local! {
     static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
     static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
+    /// Program and icon id of icons an app deleted, until it adds one with that id again. A new
+    /// instance of the app has a new window, so the model's own record of deletions misses it.
+    static APP_DELETED: RefCell<HashSet<(String, u32)>> =
+        RefCell::new(HashSet::new());
     static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
     static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
     /// Where the Start button was clicked, in screen coordinates, until the menu is toggled.
@@ -190,6 +198,7 @@ fn apply(config: &Config, force_hide_explorer: bool) {
                 "explorer hidden, startup state={:?}",
                 explorer::startup_state()
             ));
+            log(&explorer::hide_minimized_windows());
         } else {
             explorer::restore();
         }
@@ -224,6 +233,20 @@ fn apply(config: &Config, force_hide_explorer: bool) {
     }
     bar::build(planned, hide && !explorer::startup_autohide(), config);
     sync_tray(config.tray.enabled);
+    sync_win_key(config);
+}
+
+/// Starts or stops the Windows key hook to match the config.
+fn sync_win_key(config: &Config) {
+    let (Some(control), true) = (CONTROL.get(), config.start.enabled && config.start.win_key)
+    else {
+        jtb_win::winkey::uninstall();
+        return;
+    };
+    match jtb_win::winkey::install(control, WM_APP_WINKEY) {
+        Ok(()) => {}
+        Err(error) => log(&format!("start: the Windows key hook failed: {error}")),
+    }
 }
 
 /// Takes or gives back the tray role to match the config.
@@ -263,13 +286,27 @@ fn on_tray_packet(data: &[u8]) -> bool {
     if packet.is_shell_status_icon() {
         return false;
     }
-    // An app that deleted its icon may keep modifying it; Explorer has no such icon, so refuse.
-    if packet.is_modify() && TRAY_ICONS.with_borrow(|icons| icons.was_deleted(packet.key())) {
-        log(&format!(
-            "tray: modify of a deleted icon refused owner={owner} id={}",
-            packet.id
-        ));
-        return false;
+    // Explorer ignores a modify of an icon it does not hold. An app that deleted its icon may keep
+    // modifying it, also from a new instance; a modify for any other unknown icon is taken as an
+    // add, since some apps never add an icon again after the bar took the tray.
+    let app_deleted = (owner.clone(), packet.id);
+    if packet.message == traypacket::NIM_DELETE {
+        APP_DELETED.with_borrow_mut(|set| set.insert(app_deleted.clone()));
+    } else if packet.message == traypacket::NIM_ADD {
+        APP_DELETED.with_borrow_mut(|set| set.remove(&app_deleted));
+    }
+    if packet.is_modify() {
+        let key = packet.key();
+        let (deleted, known) =
+            TRAY_ICONS.with_borrow(|icons| (icons.was_deleted(key), icons.knows(key)));
+        let by_app = !known && APP_DELETED.with_borrow(|set| set.contains(&app_deleted));
+        if deleted || by_app {
+            log(&format!(
+                "tray: modify of a deleted icon refused owner={owner} id={}",
+                packet.id
+            ));
+            return false;
+        }
     }
     let icon = if valid && packet.wants_icon() {
         let id = next_icon_id();
@@ -520,6 +557,14 @@ enum Click {
 }
 
 impl Click {
+    fn kind(&self) -> &'static str {
+        match self {
+            Click::Window { .. } => "window",
+            Click::Header { .. } => "group header",
+            Click::Start => "start button",
+        }
+    }
+
     /// Key of the group the button belongs to.
     fn key(&self) -> &str {
         match self {
@@ -686,8 +731,45 @@ fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
     Some(pos)
 }
 
+/// Whether the Start button opens the built-in menu: asked for, or `auto` without Open-Shell.
+fn uses_stock_menu(config: &StartConfig) -> bool {
+    match config.menu {
+        StartMenu::Auto => !std::path::Path::new(&config.command).is_file(),
+        menu => menu == StartMenu::Stock,
+    }
+}
+
+/// Right click on the Start button: Open-Shell's own menu, when Open-Shell is the start menu.
+fn start_context_menu(hwnd: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
+    let config = current_config().start;
+    let shift = unsafe { GetKeyState(i32::from(VK_SHIFT.0)) } < 0;
+    if shift || uses_stock_menu(&config) {
+        return;
+    }
+    let items = [
+        ("Open-Shell Menu", false),
+        ("-", true),
+        ("Windows Explorer", true),
+        ("Open", true),
+        ("Open All Users", true),
+        ("-", true),
+        ("Settings", true),
+        ("Exit", true),
+    ];
+    let folder = |path: &str| launch_app("explorer.exe", &[path.to_string()]);
+    match logged_popup(hwnd, &items) {
+        Some(2) => folder("shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}"),
+        Some(3) => folder("shell:Start Menu"),
+        Some(4) => folder("shell:Common Start Menu"),
+        Some(6) => launch_app(&config.command, &["-settings".to_string()]),
+        Some(7) => launch_app(&config.command, &["-exit".to_string()]),
+        _ => {}
+    }
+}
+
 fn run_start(config: &StartConfig) {
-    if config.menu == StartMenu::Stock {
+    if uses_stock_menu(config) {
         use windows::Win32::Graphics::Gdi::{
             GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
         };
@@ -728,17 +810,28 @@ fn run_start(config: &StartConfig) {
     ));
     let held = START_RECT.take();
     if let Some(button) = held.filter(|_| config.in_process) {
-        match open_in_process(config, button) {
-            Ok(()) => {
-                log(&format!(
-                    "start: opened Open-Shell's menu in this process: {}",
-                    menuhost::describe()
-                ));
-                return;
+        let started = std::time::Instant::now();
+        let fallback = config.clone();
+        let opened = open_in_process(config, button, move |result| match result {
+            Ok(text) => log(&format!(
+                "start: opened Open-Shell's menu in this process after {:?}: {text}",
+                started.elapsed()
+            )),
+            Err(error) => {
+                log(&format!("start: in-process menu failed: {error}"));
+                open_through_explorer(&fallback, held);
             }
+        });
+        match opened {
+            Ok(()) => return,
             Err(error) => log(&format!("start: in-process menu failed: {error}")),
         }
     }
+    open_through_explorer(config, held);
+}
+
+/// Opens the menu with the command, through Explorer's taskbar when that is how the command works.
+fn open_through_explorer(config: &StartConfig, held: Option<RECT>) {
     if let Some(rect) = held {
         let moved = startmenu::move_button(rect);
         log(&format!(
@@ -760,7 +853,11 @@ fn run_start(config: &StartConfig) {
     }
 }
 
-fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<(), String> {
+fn open_in_process(
+    config: &StartConfig,
+    button: RECT,
+    done: impl FnOnce(std::result::Result<String, String>) + Send + 'static,
+) -> std::result::Result<(), String> {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     };
@@ -787,6 +884,7 @@ fn open_in_process(config: &StartConfig, button: RECT) -> std::result::Result<()
             monitor_rect: info.rcWork,
             edge,
         },
+        done,
     )
 }
 
@@ -989,13 +1087,17 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
                 let foreground = tasks::foreground();
                 let active = view.active || foreground == Some(*id);
                 log(&format!(
-                    "click: window {id} active={} foreground={foreground:?}",
-                    view.active
+                    "click: window {id} active={} foreground={foreground:?} gui_active={:?}",
+                    view.active,
+                    tasks::gui_active()
                 ));
-                tasks::activate_or_minimize(*id, active);
+                let note = tasks::activate_or_minimize(*id, active);
+                log(&format!("click: window {id}: {note}"));
             }
             Click::Header { windows, .. } => match windows.first() {
-                Some(id) => tasks::activate_or_minimize(*id, false),
+                Some(id) => {
+                    tasks::activate_or_minimize(*id, false);
+                }
                 None => launch_click(&click, &pins),
             },
             Click::Start => {}
@@ -1084,13 +1186,28 @@ fn pin_program(path: &str, args: Vec<String>) -> bool {
     })
 }
 
+fn logged_popup(hwnd: HWND, items: &[(&str, bool)]) -> Option<usize> {
+    let started = std::time::Instant::now();
+    let chosen = shell::popup_menu(hwnd, items);
+    log(&format!(
+        "context menu: choice {chosen:?} after {:?}",
+        started.elapsed()
+    ));
+    chosen
+}
+
 /// The right-click menu of the `index`th button of the bar on `monitor`.
 pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
     let config = current_config();
     let pins = effective_pins(&config);
     let Some((_, click)) = build_bar(monitor, &config, &pins).into_iter().nth(index) else {
+        log(&format!("context menu: no button at index {index}"));
         return;
     };
+    log(&format!(
+        "context menu: button {index} is a {}",
+        click.kind()
+    ));
     match &click {
         Click::Window { id, .. } => {
             let exe = exe_of(*id);
@@ -1099,7 +1216,7 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 ("Create notification rule...", true),
                 ("Close window", true),
             ];
-            match shell::popup_menu(hwnd, &items) {
+            match logged_popup(hwnd, &items) {
                 Some(0) => {
                     if pin_program(&exe, Vec::new()) {
                         save_state();
@@ -1113,14 +1230,14 @@ pub fn context_menu(monitor: Option<RECT>, index: usize, hwnd: HWND) {
                 _ => {}
             }
         }
-        Click::Start => {}
+        Click::Start => start_context_menu(hwnd),
         Click::Header { key, pin, .. } => {
             let items = [
                 ("Launch new", true),
                 ("Fold or unfold", true),
                 ("Unpin", pin.is_some()),
             ];
-            match shell::popup_menu(hwnd, &items) {
+            match logged_popup(hwnd, &items) {
                 Some(0) => launch_click(&click, &pins),
                 Some(1) => toggle_fold(key),
                 Some(2) => {
@@ -1339,6 +1456,7 @@ pub fn restart() {
 
 /// Removes all appbars and ends the message loop.
 pub fn quit() {
+    jtb_win::winkey::uninstall();
     menuhost::close();
     jtb_win::flyout::release_hook();
     bar::destroy_all();
@@ -1459,6 +1577,7 @@ fn main() -> Result<()> {
         SetTimer(Some(control), TIMER_WIDGETS, 100, None);
         SetTimer(Some(control), TIMER_CONFIG, 1000, None);
         SetTimer(Some(control), TIMER_ZORDER, 200, None);
+        jtb_win::fullscreen::watch_focus(log);
         if let Some(secs) = args.quit_after_secs {
             SetTimer(Some(control), TIMER_QUIT, secs * 1000, None);
         }
@@ -1477,7 +1596,12 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         WM_TIMER => {
             match wparam.0 {
                 TIMER_HIDE_EXPLORER => {
-                    if explorer::enforce_hidden() {
+                    for line in explorer::quiet_open_shell_buttons() {
+                        log(&line);
+                    }
+                    // Explorer keeps its taskbar out of a fullscreen app's way; hiding and
+                    // showing it again meanwhile set off display changes in a game.
+                    if !bar::fullscreen_active() && explorer::enforce_hidden() {
                         log("explorer taskbar was visible, hid it again");
                     }
                 }
@@ -1521,12 +1645,32 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                 }
                 TIMER_ZORDER => {
+                    if let Some(line) = bar::follow_fullscreen() {
+                        log(&line);
+                    }
                     bar::keep_above_explorer();
+                    if let Some(line) = bar::ensure_reserved() {
+                        log(&line);
+                    }
                     if tray::follow_explorer() {
                         log("tray: Explorer restarted, took the tray role again");
                     }
-                    if tray::keep_on_top() {
+                    if !bar::fullscreen_active() && tray::keep_on_top() {
                         log("tray: raised our Shell_TrayWnd");
+                    }
+                }
+                TIMER_DISPLAY => {
+                    // The bars stay where they are until the fullscreen window is gone: its video
+                    // mode is not the desktop's layout.
+                    if bar::fullscreen_active() {
+                        return LRESULT(0);
+                    }
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_DISPLAY);
+                    }
+                    if let Some((config, force)) = current_settings() {
+                        log("display settled, laying out the bars");
+                        apply(&config, force);
                     }
                 }
                 TIMER_CONFIG => poll_config(),
@@ -1541,16 +1685,26 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             }
             LRESULT(0)
         }
+        // A game changing the video mode sends a burst of these, some while `apply` is waiting on
+        // Explorer; laying out the bars in each of them stacked duplicate bars.
         WM_DISPLAYCHANGE => {
-            log("display change");
-            if let Some((config, force)) = current_settings() {
-                apply(&config, force);
-            }
+            log(&format!(
+                "display change to {}x{}, {} bits",
+                lparam.0 & 0xffff,
+                (lparam.0 >> 16) & 0xffff,
+                wparam.0
+            ));
+            unsafe { SetTimer(Some(hwnd), TIMER_DISPLAY, DISPLAY_SETTLE_MS, None) };
             LRESULT(0)
         }
         WM_APP_RESTART => {
             log("control: restart message received");
             restart();
+            LRESULT(0)
+        }
+        WM_APP_WINKEY => {
+            log("start: Windows key pressed alone");
+            bar::press_start_at_cursor();
             LRESULT(0)
         }
         WM_APP_QUIT => {

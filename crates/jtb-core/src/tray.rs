@@ -119,7 +119,7 @@ impl TrayUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayChange {
     /// `NIM_ADD` and `NIM_MODIFY` alike: creates the icon if unknown, else updates it. Apps
-    /// resend adds after Explorer restarts, and some modify an icon they never added here.
+    /// resend adds after Explorer restarts; the caller refuses modifies of unknown icons.
     Set(TrayUpdate),
     Delete(TrayKey),
     SetVersion(TrayKey, u32),
@@ -137,6 +137,11 @@ impl TrayIcons {
     /// True while `key` was deleted by its app and not added again: a modify for it is stale.
     pub fn was_deleted(&self, key: TrayKey) -> bool {
         self.deleted.contains(&key)
+    }
+
+    /// True while an icon for `key` is held.
+    pub fn knows(&self, key: TrayKey) -> bool {
+        self.items.iter().any(|i| i.key == key)
     }
 
     /// Returns true when something that is drawn may have changed.
@@ -313,6 +318,16 @@ mod tests {
         assert!(!icons.was_deleted(key(1, 2)));
         icons.apply(named(key(1, 1), "one"));
         assert!(!icons.was_deleted(key(1, 1)));
+    }
+
+    #[test]
+    fn an_icon_is_known_after_it_was_set_and_not_after_it_was_deleted() {
+        let mut icons = TrayIcons::default();
+        assert!(!icons.knows(key(1, 1)));
+        icons.apply(named(key(1, 1), "one"));
+        assert!(icons.knows(key(1, 1)));
+        icons.apply(TrayChange::Delete(key(1, 1)));
+        assert!(!icons.knows(key(1, 1)));
     }
 
     #[test]

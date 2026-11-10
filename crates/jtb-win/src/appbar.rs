@@ -75,6 +75,20 @@ impl AppBar {
         self.edge
     }
 
+    pub fn window(&self) -> HWND {
+        self.hwnd
+    }
+
+    /// What Explorer offers `other` for this bar's edge of its monitor. Smaller than the monitor
+    /// when Explorer holds this bar's registration.
+    pub fn probe(&self, other: HWND) -> RECT {
+        let mut abd = data(other);
+        abd.uEdge = abe(self.edge);
+        abd.rc = self.monitor;
+        unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut abd) };
+        abd.rc
+    }
+
     pub fn callback_message(&self) -> u32 {
         self.callback_message
     }
@@ -218,8 +232,15 @@ impl AppBar {
     pub fn reregister(&self) -> String {
         let mut abd = data(self.hwnd);
         abd.uCallbackMessage = self.callback_message;
-        unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
-        self.set_pos()
+        let registered = unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
+        format!("registration answer {registered}; {}", self.set_pos())
+    }
+
+    /// Removes the registration and makes it again, which makes Explorer work out the work area
+    /// from scratch.
+    pub fn rebuild(&self) -> String {
+        self.remove();
+        self.reregister()
     }
 
     pub fn activate(&self) {
