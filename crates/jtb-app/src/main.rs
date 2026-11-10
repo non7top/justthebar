@@ -71,6 +71,10 @@ thread_local! {
     static EXE_ICONS: RefCell<HashMap<String, Option<Arc<Icon>>>> = RefCell::new(HashMap::new());
     static UI_STATE: RefCell<UiState> = RefCell::new(UiState::default());
     static TRAY_ICONS: RefCell<TrayIcons> = RefCell::new(TrayIcons::default());
+    /// Program and icon id of icons an app deleted, until it adds one with that id again. A new
+    /// instance of the app has a new window, so the model's own record of deletions misses it.
+    static APP_DELETED: RefCell<HashSet<(String, u32)>> =
+        RefCell::new(HashSet::new());
     static START_ART: RefCell<Option<(String, Option<StartFrames>)>> = const { RefCell::new(None) };
     static LAST_PRESS: Cell<[Option<std::time::Instant>; 3]> = const { Cell::new([None; 3]) };
     /// Where the Start button was clicked, in screen coordinates, until the menu is toggled.
@@ -282,15 +286,23 @@ fn on_tray_packet(data: &[u8]) -> bool {
     if packet.is_shell_status_icon() {
         return false;
     }
-    // Explorer ignores a modify of an icon it does not hold (one the app deleted or never added).
+    // Explorer ignores a modify of an icon it does not hold. An app that deleted its icon may keep
+    // modifying it, also from a new instance; a modify for any other unknown icon is taken as an
+    // add, since some apps never add an icon again after the bar took the tray.
+    let app_deleted = (owner.clone(), packet.id);
+    if packet.message == traypacket::NIM_DELETE {
+        APP_DELETED.with_borrow_mut(|set| set.insert(app_deleted.clone()));
+    } else if packet.message == traypacket::NIM_ADD {
+        APP_DELETED.with_borrow_mut(|set| set.remove(&app_deleted));
+    }
     if packet.is_modify() {
         let key = packet.key();
         let (deleted, known) =
             TRAY_ICONS.with_borrow(|icons| (icons.was_deleted(key), icons.knows(key)));
-        if deleted || !known {
-            let what = if deleted { "a deleted" } else { "an unknown" };
+        let by_app = !known && APP_DELETED.with_borrow(|set| set.contains(&app_deleted));
+        if deleted || by_app {
             log(&format!(
-                "tray: modify of {what} icon refused owner={owner} id={}",
+                "tray: modify of a deleted icon refused owner={owner} id={}",
                 packet.id
             ));
             return false;
