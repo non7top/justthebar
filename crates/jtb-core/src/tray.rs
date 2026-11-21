@@ -144,6 +144,18 @@ impl TrayIcons {
         self.items.iter().any(|i| i.key == key)
     }
 
+    /// The first shown icon with this id.
+    pub fn find_by_id(&self, id: u32) -> Option<&TrayIcon> {
+        self.visible().find(|i| i.key.id == id)
+    }
+
+    /// Drops an icon whose delete never arrived. Unlike a delete, a later modify still counts.
+    pub fn forget(&mut self, key: TrayKey) -> bool {
+        let before = self.items.len();
+        self.items.retain(|i| i.key != key);
+        self.items.len() != before
+    }
+
     /// Returns true when something that is drawn may have changed.
     pub fn apply(&mut self, change: TrayChange) -> bool {
         match change {
@@ -328,6 +340,17 @@ mod tests {
         assert!(icons.knows(key(1, 1)));
         icons.apply(TrayChange::Delete(key(1, 1)));
         assert!(!icons.knows(key(1, 1)));
+    }
+
+    #[test]
+    fn a_forgotten_icon_is_gone_but_not_marked_deleted() {
+        let mut icons = TrayIcons::default();
+        icons.apply(named(key(1, 101), "mic"));
+        assert_eq!(icons.find_by_id(101).map(|i| i.key), Some(key(1, 101)));
+        assert!(icons.forget(key(1, 101)));
+        assert!(!icons.knows(key(1, 101)));
+        assert!(!icons.was_deleted(key(1, 101)));
+        assert!(!icons.forget(key(1, 101)));
     }
 
     #[test]

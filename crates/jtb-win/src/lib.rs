@@ -8,6 +8,7 @@ pub mod hookdll;
 pub mod langmenu;
 pub mod menuhost;
 pub mod monitors;
+pub mod privacy;
 pub mod shell;
 pub mod startmenu;
 pub mod stockmenu;

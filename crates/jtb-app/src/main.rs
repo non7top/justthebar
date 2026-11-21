@@ -89,6 +89,7 @@ thread_local! {
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
     static STARTUP_ARGS: RefCell<Vec<std::ffi::OsString>> = const { RefCell::new(Vec::new()) };
     static RESTARTING: Cell<bool> = const { Cell::new(false) };
+    static MIC_IDLE_SECONDS: Cell<u32> = const { Cell::new(0) };
     static BLINK_PHASE: Cell<bool> = const { Cell::new(false) };
     static BLINK_COUNTER: Cell<u8> = const { Cell::new(0) };
     /// Monitor rectangles (left, top, right, bottom) the bars were last laid out for.
@@ -283,6 +284,34 @@ fn sync_tray(enabled: bool) {
 fn drop_dead_tray_icons() {
     if TRAY_ICONS.with_borrow_mut(|icons| icons.drop_dead(tray::owner_alive)) {
         log("tray: dropped icons of exited apps");
+    }
+}
+
+/// Windows removes the microphone indicator when the last app lets go of the mic, but that delete
+/// has been seen not to arrive; the icon is then dropped once the privacy store shows no user.
+fn drop_stale_microphone_icon() {
+    const MIC_ICON_ID: u32 = 101;
+    const IDLE_SECONDS: u32 = 5;
+    let key = TRAY_ICONS.with_borrow(|icons| icons.find_by_id(MIC_ICON_ID).map(|i| i.key));
+    let from_explorer = key.is_some_and(|key| {
+        tasks::process_path(key.owner)
+            .is_some_and(|path| path.to_lowercase().ends_with("explorer.exe"))
+    });
+    let Some(key) = key.filter(|_| from_explorer) else {
+        MIC_IDLE_SECONDS.set(0);
+        return;
+    };
+    if jtb_win::privacy::microphone_in_use() != Some(false) {
+        MIC_IDLE_SECONDS.set(0);
+        return;
+    }
+    MIC_IDLE_SECONDS.set(MIC_IDLE_SECONDS.get() + 1);
+    if MIC_IDLE_SECONDS.get() >= IDLE_SECONDS {
+        MIC_IDLE_SECONDS.set(0);
+        if TRAY_ICONS.with_borrow_mut(|icons| icons.forget(key)) {
+            log("tray: microphone icon dropped, no app is using the microphone");
+            bar::invalidate_all();
+        }
     }
 }
 
@@ -674,8 +703,6 @@ fn load_start_art(image: &str) -> Option<StartFrames> {
         art.normal.width, art.normal.height
     ));
     let icon = |frame: startart::Frame| {
-        let id = NEXT_ICON_ID.get();
-        NEXT_ICON_ID.set(id + 1);
         Arc::new(Icon {
             id: next_icon_id(),
             width: frame.width,
@@ -1646,6 +1673,7 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 }
                 TIMER_CLOCK => {
                     drop_dead_tray_icons();
+                    drop_stale_microphone_icon();
                     widgets::refresh();
                     sync_tasks();
                     bar::invalidate_all();
