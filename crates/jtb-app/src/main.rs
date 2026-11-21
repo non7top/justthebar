@@ -631,14 +631,7 @@ fn exe_icon(path: &str) -> Option<Arc<Icon>> {
     EXE_ICONS.with_borrow_mut(|cache| {
         cache
             .entry(path.to_string())
-            .or_insert_with(|| {
-                let id = NEXT_ICON_ID.get();
-                let icon = tasks::exe_icon(path, id).map(Arc::new);
-                if icon.is_some() {
-                    NEXT_ICON_ID.set(id + 1);
-                }
-                icon
-            })
+            .or_insert_with(|| tasks::exe_icon(path, next_icon_id()).map(Arc::new))
             .clone()
     })
 }
@@ -684,7 +677,7 @@ fn load_start_art(image: &str) -> Option<StartFrames> {
         let id = NEXT_ICON_ID.get();
         NEXT_ICON_ID.set(id + 1);
         Arc::new(Icon {
-            id,
+            id: next_icon_id(),
             width: frame.width,
             height: frame.height,
             bgra: frame.bgra,
@@ -1298,16 +1291,25 @@ fn sync_tasks() {
 
 /// Loads the icon of `id`, keeping the old image (and its cached upload) if the pixels match.
 fn load_icon(id: isize) {
-    let next = NEXT_ICON_ID.get();
-    let fresh = tasks::icon(id, next);
+    // Asking the window for its icon lets other windows' messages run, which hand out ids too.
+    let next = next_icon_id();
+    let loaded = tasks::icon(id, next);
+    let source = loaded.as_ref().map(|(_, source)| *source);
+    let fresh = loaded.map(|(icon, _)| icon);
     ICONS.with_borrow_mut(|icons| {
         let kept = icons
             .get(&id)
             .cloned()
             .flatten()
             .filter(|old| fresh.as_ref().is_some_and(|new| old.same_pixels(new)));
-        if kept.is_none() && fresh.is_some() {
-            NEXT_ICON_ID.set(next + 1);
+        if kept.is_none() {
+            let exe = TASKS.with_borrow(|list| list.get(id).map(|t| t.exe.clone()));
+            log(&format!(
+                "icon: window {id:#x} exe {:?} icon id {} from {}",
+                exe.unwrap_or_default(),
+                if fresh.is_some() { next } else { 0 },
+                source.unwrap_or("none")
+            ));
         }
         icons.insert(id, kept.or_else(|| fresh.map(Arc::new)));
     });

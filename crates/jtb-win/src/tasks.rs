@@ -257,8 +257,12 @@ pub fn activate_or_minimize(id: isize, is_active: bool) -> String {
 }
 
 /// The window's own icon, else its class icon. These handles belong to the window's app.
-fn icon_handle(hwnd: HWND) -> Option<HICON> {
-    for kind in [ICON_BIG, ICON_SMALL2, ICON_SMALL] {
+fn icon_handle(hwnd: HWND) -> Option<(HICON, &'static str)> {
+    for (kind, source) in [
+        (ICON_BIG, "big"),
+        (ICON_SMALL2, "small2"),
+        (ICON_SMALL, "small"),
+    ] {
         let mut result = 0usize;
         let sent = unsafe {
             SendMessageTimeoutW(
@@ -272,13 +276,13 @@ fn icon_handle(hwnd: HWND) -> Option<HICON> {
             )
         };
         if sent.0 != 0 && result != 0 {
-            return Some(HICON(result as *mut c_void));
+            return Some((HICON(result as *mut c_void), source));
         }
     }
-    for index in [GCLP_HICON, GCLP_HICONSM] {
+    for (index, source) in [(GCLP_HICON, "class"), (GCLP_HICONSM, "class small")] {
         let handle = unsafe { GetClassLongPtrW(hwnd, index) };
         if handle != 0 {
-            return Some(HICON(handle as *mut c_void));
+            return Some((HICON(handle as *mut c_void), source));
         }
     }
     None
@@ -357,9 +361,10 @@ fn decode_icon(hicon: HICON, icon_id: u64) -> Option<Icon> {
     icon
 }
 
-/// Loads the window's icon as pixels, tagged with `icon_id`.
-pub fn icon(id: isize, icon_id: u64) -> Option<Icon> {
-    decode_icon(icon_handle(hwnd_of(id))?, icon_id)
+/// Loads the window's icon as pixels, tagged with `icon_id`, and where it came from.
+pub fn icon(id: isize, icon_id: u64) -> Option<(Icon, &'static str)> {
+    let (handle, source) = icon_handle(hwnd_of(id))?;
+    decode_icon(handle, icon_id).map(|icon| (icon, source))
 }
 
 /// Decodes an icon handle an app sent to the tray; such handles are valid in every process.
