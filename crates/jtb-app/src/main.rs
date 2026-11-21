@@ -91,6 +91,15 @@ thread_local! {
     static RESTARTING: Cell<bool> = const { Cell::new(false) };
     static BLINK_PHASE: Cell<bool> = const { Cell::new(false) };
     static BLINK_COUNTER: Cell<u8> = const { Cell::new(0) };
+    /// Monitor rectangles (left, top, right, bottom) the bars were last laid out for.
+    static LAID_OUT_FOR: RefCell<Vec<(i32, i32, i32, i32)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn monitor_rects() -> Vec<(i32, i32, i32, i32)> {
+    monitors::list()
+        .iter()
+        .map(|m| (m.rect.left, m.rect.top, m.rect.right, m.rect.bottom))
+        .collect()
 }
 
 fn exe_sibling(name: &str) -> Option<PathBuf> {
@@ -216,6 +225,7 @@ fn apply(config: &Config, force_hide_explorer: bool) {
     }
 
     bar::destroy_all();
+    LAID_OUT_FOR.set(monitor_rects());
     let monitors = monitors::list();
     let mut planned = Vec::new();
     for (index, bar_config) in config.bars.iter().enumerate().filter(|(_, b)| b.enabled) {
@@ -1694,6 +1704,10 @@ extern "system" fn control_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                     }
                     unsafe {
                         let _ = KillTimer(Some(hwnd), TIMER_DISPLAY);
+                    }
+                    if bar::any() && LAID_OUT_FOR.with_borrow(|laid| *laid == monitor_rects()) {
+                        log("display settled, monitors unchanged, bars kept");
+                        return LRESULT(0);
                     }
                     if let Some((config, force)) = current_settings() {
                         log("display settled, laying out the bars");

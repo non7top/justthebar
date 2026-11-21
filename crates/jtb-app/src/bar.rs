@@ -184,6 +184,10 @@ fn create_window(plan: &Planned) -> Result<HWND> {
     }
 }
 
+pub fn any() -> bool {
+    BARS.with_borrow(|bars| !bars.is_empty())
+}
+
 /// Unregisters every appbar and closes its window.
 pub fn destroy_all() {
     let bars = BARS.take();
