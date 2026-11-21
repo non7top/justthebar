@@ -18,11 +18,12 @@ use windows::Win32::System::LibraryLoader::{
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetClassNameW,
-    GetMessageW, GetWindowRect, PostMessageW, RegisterClassW, SendMessageTimeoutW, SendMessageW,
-    SetWindowPos, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, CWPSTRUCT,
-    HWND_MESSAGE, MSG, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOZORDER, WH_CALLWNDPROC, WM_APP,
-    WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, FindWindowW,
+    GetClassNameW, GetMessageW, GetWindowRect, IsWindowVisible, PostMessageW, RegisterClassW,
+    SendMessageTimeoutW, SendMessageW, SetWindowPos, SetWindowsHookExW, TranslateMessage,
+    UnhookWindowsHookEx, CWPSTRUCT, HWND_MESSAGE, MSG, SMTO_NORMAL, SWP_NOACTIVATE, SWP_NOZORDER,
+    WH_CALLWNDPROC, WM_APP, WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 
 #[link(name = "ole32")]
@@ -229,6 +230,20 @@ fn run_toggle(dll: &str, params: StartMenuParams) -> Result<(), String> {
         let _ = UnhookWindowsHookEx(hook);
     }
     Ok(())
+}
+
+/// Whether a window of Open-Shell's menu is on screen now.
+pub fn menu_visible() -> bool {
+    let mut after: Option<HWND> = None;
+    while let Ok(next) =
+        unsafe { FindWindowExW(None, after, w!("OpenShell.CMenuContainer"), PCWSTR::null()) }
+    {
+        if unsafe { IsWindowVisible(next) }.as_bool() {
+            return true;
+        }
+        after = Some(next);
+    }
+    false
 }
 
 /// What Windows says about the anchor window and the menu window after a toggle, for the log.

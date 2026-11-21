@@ -452,6 +452,7 @@ pub fn press_start_at_cursor() {
         return;
     };
     if crate::start_enabled() {
+        crate::note_start_press(false);
         note_start_rect(hwnd, bar);
         crate::click_row(task_monitor_of(hwnd), 0, Button::Left);
     }
@@ -906,6 +907,9 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         return LRESULT(0);
                     }
                     let index = button_at(hwnd, bar, lparam);
+                    if index == Some(0) && crate::start_enabled() {
+                        crate::note_start_press(true);
+                    }
                     let (x, y) = point_of(lparam);
                     set_press(hwnd, index.map(|i| (i, x, y)));
                     if index.is_some() {

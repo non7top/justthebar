@@ -82,6 +82,8 @@ thread_local! {
     /// The edge (`ABE_*`) and screen rectangle of the bar whose Start button was clicked last.
     static START_BAR: Cell<Option<(u32, RECT)>> = const { Cell::new(None) };
     static START_BAR_WINDOW: Cell<isize> = const { Cell::new(0) };
+    /// Whether Open-Shell's menu was showing when the Start button was pressed.
+    static START_MENU_OPEN_AT_PRESS: Cell<bool> = const { Cell::new(false) };
     static NEXT_ICON_ID: Cell<u64> = const { Cell::new(1) };
     static SHELLHOOK_MESSAGE: Cell<u32> = const { Cell::new(0) };
     static LAST_SNAPSHOT: RefCell<String> = const { RefCell::new(String::new()) };
@@ -705,6 +707,11 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
     (view, Click::Start)
 }
 
+/// Called when the Start button is pressed, before the menu can react to the click.
+pub fn note_start_press(menu_may_be_open: bool) {
+    START_MENU_OPEN_AT_PRESS.set(menu_may_be_open && menuhost::menu_visible());
+}
+
 /// Remembers where the Start button the user just clicked is, for `run_start`.
 pub fn note_start_rect(rect: RECT) {
     START_RECT.set(Some(rect));
@@ -807,6 +814,23 @@ fn run_start(config: &StartConfig) {
         return;
     }
 
+    if START_MENU_OPEN_AT_PRESS.take() {
+        // Pressing the button takes the menu's focus and closes it; opening it again would make
+        // this click a no-op. A menu that is still up after the release is closed by the toggle.
+        let mut open = menuhost::menu_visible();
+        for _ in 0..12 {
+            if !open {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            open = menuhost::menu_visible();
+        }
+        if !open {
+            log("start: the menu was open at the press and closed by it, not opening it again");
+            return;
+        }
+        log("start: the menu was open at the press and still is, closing it");
+    }
     log(&format!(
         "start button: {} {:?}",
         config.command, config.args
