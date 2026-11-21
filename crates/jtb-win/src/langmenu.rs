@@ -1,7 +1,7 @@
 //! A popup menu listing the installed keyboard layouts, opened next to the language widget.
 //! Choosing one asks the window that had the focus to switch; when it ignores the request, Win+Space
 //! is pressed as many times as it takes.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 use jtb_core::Edge;
@@ -31,7 +31,12 @@ struct Pending {
 
 thread_local! {
     static PENDING: RefCell<Option<Pending>> = const { RefCell::new(None) };
+    static DISMISSED: Cell<Option<Instant>> = const { Cell::new(None) };
 }
+
+/// A click outside a menu closes it and the same click still reaches the bar, which would open it
+/// again; the click that closed it is over within this time.
+const REOPEN_GUARD: Duration = Duration::from_millis(500);
 
 fn locale_text(language: u32, kind: u32) -> String {
     let mut buffer = [0u16; 96];
@@ -61,6 +66,12 @@ fn layouts() -> Vec<HKL> {
 
 /// Shows the menu at `anchor` and acts on the choice. Returns a line for the log.
 pub fn show(anchor: &Anchor) -> String {
+    if DISMISSED
+        .get()
+        .is_some_and(|at| at.elapsed() < REOPEN_GUARD)
+    {
+        return "language: ignored the click that closed the menu".to_string();
+    }
     let previous = unsafe { GetForegroundWindow() };
     let current = layout_of(previous);
     let list = layouts();
@@ -118,6 +129,7 @@ pub fn show(anchor: &Anchor) -> String {
         )
     }
     .0;
+    DISMISSED.set((chosen == 0).then(Instant::now));
     let _ = unsafe { PostMessageW(Some(anchor.window), WM_NULL, WPARAM(0), LPARAM(0)) };
     let _ = unsafe { DestroyMenu(menu) };
     if !previous.0.is_null() {

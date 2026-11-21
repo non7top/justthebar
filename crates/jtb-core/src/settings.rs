@@ -118,9 +118,9 @@ pub const SCHEMA: &[OptionSpec] = &[
     },
     OptionSpec {
         path: "start.menu",
-        kind: Kind::Choice(&["stock", "openshell"]),
-        description: "Start menu provider: stock built-in flat widget or Open-Shell.",
-        default: "stock",
+        kind: Kind::Choice(&["auto", "openshell", "stock"]),
+        description: "Start menu: Open-Shell when it is installed (auto), only Open-Shell, or the built-in flat menu (stock).",
+        default: "auto",
     },
     OptionSpec {
         path: "start.command",
@@ -156,6 +156,12 @@ pub const SCHEMA: &[OptionSpec] = &[
         path: "start.in_process",
         kind: Kind::Bool,
         description: "Open Open-Shell's menu from a copy of its library inside this app, which places it next to the button.",
+        default: "true",
+    },
+    OptionSpec {
+        path: "start.win_key",
+        kind: Kind::Bool,
+        description: "A lone Windows key press opens the Start menu at the bar's Start button.",
         default: "true",
     },
     OptionSpec {

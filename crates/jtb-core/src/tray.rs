@@ -119,7 +119,7 @@ impl TrayUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayChange {
     /// `NIM_ADD` and `NIM_MODIFY` alike: creates the icon if unknown, else updates it. Apps
-    /// resend adds after Explorer restarts, and some modify an icon they never added here.
+    /// resend adds after Explorer restarts; the caller refuses modifies of unknown icons.
     Set(TrayUpdate),
     Delete(TrayKey),
     SetVersion(TrayKey, u32),
@@ -137,6 +137,23 @@ impl TrayIcons {
     /// True while `key` was deleted by its app and not added again: a modify for it is stale.
     pub fn was_deleted(&self, key: TrayKey) -> bool {
         self.deleted.contains(&key)
+    }
+
+    /// True while an icon for `key` is held.
+    pub fn knows(&self, key: TrayKey) -> bool {
+        self.items.iter().any(|i| i.key == key)
+    }
+
+    /// The first shown icon with this id.
+    pub fn find_by_id(&self, id: u32) -> Option<&TrayIcon> {
+        self.visible().find(|i| i.key.id == id)
+    }
+
+    /// Drops an icon whose delete never arrived. Unlike a delete, a later modify still counts.
+    pub fn forget(&mut self, key: TrayKey) -> bool {
+        let before = self.items.len();
+        self.items.retain(|i| i.key != key);
+        self.items.len() != before
     }
 
     /// Returns true when something that is drawn may have changed.
@@ -313,6 +330,27 @@ mod tests {
         assert!(!icons.was_deleted(key(1, 2)));
         icons.apply(named(key(1, 1), "one"));
         assert!(!icons.was_deleted(key(1, 1)));
+    }
+
+    #[test]
+    fn an_icon_is_known_after_it_was_set_and_not_after_it_was_deleted() {
+        let mut icons = TrayIcons::default();
+        assert!(!icons.knows(key(1, 1)));
+        icons.apply(named(key(1, 1), "one"));
+        assert!(icons.knows(key(1, 1)));
+        icons.apply(TrayChange::Delete(key(1, 1)));
+        assert!(!icons.knows(key(1, 1)));
+    }
+
+    #[test]
+    fn a_forgotten_icon_is_gone_but_not_marked_deleted() {
+        let mut icons = TrayIcons::default();
+        icons.apply(named(key(1, 101), "mic"));
+        assert_eq!(icons.find_by_id(101).map(|i| i.key), Some(key(1, 101)));
+        assert!(icons.forget(key(1, 101)));
+        assert!(!icons.knows(key(1, 101)));
+        assert!(!icons.was_deleted(key(1, 101)));
+        assert!(!icons.forget(key(1, 101)));
     }
 
     #[test]

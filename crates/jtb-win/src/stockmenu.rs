@@ -10,14 +10,15 @@ use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, W
 use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
-    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, LineTo, MoveToEx,
-    RoundRect, SelectObject, SetBkMode, SetTextColor, ANTIALIASED_QUALITY, CLIP_DEFAULT_PRECIS,
-    DEFAULT_CHARSET, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FW_BOLD, FW_NORMAL, HBRUSH,
-    HDC, HFONT, HGDIOBJ, HPEN, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
+    CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, LineTo,
+    MonitorFromRect, MoveToEx, RoundRect, SelectObject, SetBkMode, SetTextColor,
+    ANTIALIASED_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE,
+    DT_VCENTER, FW_BOLD, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, HPEN, MONITOR_DEFAULTTONEAREST,
+    OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
 };
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     keybd_event, SetFocus, TrackMouseEvent, KEYEVENTF_KEYUP, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE,
     VK_LWIN,
@@ -646,7 +647,13 @@ pub fn toggle(window: HWND, edge: Edge, _bar: RECT, button: RECT, monitor: RECT)
         Err(_) => return,
     };
 
-    let dpi_scale = unsafe { GetDpiForWindow(popup) } as f32 / 96.0;
+    // The popup is created at 0,0, so its own DPI is the primary monitor's, not the button's.
+    let monitor_handle = unsafe { MonitorFromRect(&button, MONITOR_DEFAULTTONEAREST) };
+    let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
+    let dpi =
+        unsafe { GetDpiForMonitor(monitor_handle, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
+            .map_or(96, |()| dpi_x);
+    let dpi_scale = dpi as f32 / 96.0;
     let width = (BASE_WIDTH as f32 * dpi_scale).round() as i32;
     let height = (BASE_HEIGHT as f32 * dpi_scale).round() as i32;
 

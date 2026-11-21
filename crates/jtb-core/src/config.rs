@@ -177,7 +177,9 @@ impl From<WidgetEntry> for WidgetConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StartMenu {
+    /// Open-Shell when `start.command` exists, else the built-in menu.
     #[default]
+    Auto,
     Stock,
     OpenShell,
 }
@@ -199,19 +201,23 @@ pub struct StartConfig {
     /// Opens Open-Shell's menu from a copy of its library loaded into this app, which lets the
     /// bar say exactly where the menu goes; falls back to `command` when that fails.
     pub in_process: bool,
+    /// A lone press of the Windows key opens the menu from the Start button of the bar on the
+    /// monitor under the cursor.
+    pub win_key: bool,
 }
 
 impl Default for StartConfig {
     fn default() -> Self {
         StartConfig {
             enabled: false,
-            menu: StartMenu::Stock,
+            menu: StartMenu::Auto,
             command: r"C:\Program Files\Open-Shell\StartMenu.exe".to_string(),
             args: vec!["-toggle".to_string()],
             label: "Start".to_string(),
             image: "start-button.png".to_string(),
             size: 54,
             in_process: true,
+            win_key: true,
         }
     }
 }
@@ -503,6 +509,11 @@ mod tests {
         let defaults = Config::parse("{}").unwrap().start;
         assert!(!defaults.enabled);
         assert_eq!(defaults.args, vec!["-toggle".to_string()]);
+        assert_eq!(defaults.menu, StartMenu::Auto);
+        let shell = Config::parse(r#"{"start": {"menu": "openshell"}}"#).unwrap();
+        assert_eq!(shell.start.menu, StartMenu::OpenShell);
+        let stock = Config::parse(r#"{"start": {"menu": "stock"}}"#).unwrap();
+        assert_eq!(stock.start.menu, StartMenu::Stock);
         let config =
             Config::parse(r#"{"start": {"enabled": true, "label": "Go", "image": ""}}"#).unwrap();
         assert!(config.start.enabled);

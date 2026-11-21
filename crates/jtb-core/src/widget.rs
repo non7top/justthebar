@@ -90,8 +90,9 @@ pub enum Network {
     Offline,
 }
 
-/// The network glyph: signal bars for Wi-Fi, a plug for a cable, a globe when offline.
+/// The network glyph: signal bars for Wi-Fi, a plug for a cable, a red crossed globe when offline.
 pub fn network_state(network: &Network) -> WidgetState {
+    let mut tint = None;
     let (code, tooltip) = match network {
         Network::Wifi { name, quality } => {
             let code = match quality {
@@ -103,13 +104,16 @@ pub fn network_state(network: &Network) -> WidgetState {
             (code, format!("Wi-Fi: {name}, signal {quality}%"))
         }
         Network::Ethernet => (0xE839, "Network: wired".to_string()),
-        Network::Offline => (0xE774, "Network: not connected".to_string()),
+        Network::Offline => {
+            tint = Some([0xFF, 0x99, 0xA4]);
+            (0xF384, "Network: not connected".to_string())
+        }
     };
     WidgetState {
         symbol: glyph(code),
         label: String::new(),
         tooltip,
-        tint: None,
+        tint,
     }
 }
 
@@ -175,7 +179,11 @@ mod tests {
         assert_eq!(network_state(&wifi(100)).symbol, "\u{E701}");
         assert_eq!(network_state(&wifi(60)).tooltip, "Wi-Fi: home, signal 60%");
         assert_eq!(network_state(&Network::Ethernet).symbol, "\u{E839}");
-        assert_eq!(network_state(&Network::Offline).symbol, "\u{E774}");
+        assert_eq!(network_state(&Network::Offline).symbol, "\u{F384}");
+        assert_eq!(
+            network_state(&Network::Offline).tint,
+            Some([0xFF, 0x99, 0xA4])
+        );
     }
 
     #[test]

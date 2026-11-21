@@ -12,7 +12,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow, TrackPopupMenu,
-    MF_ENABLED, MF_GRAYED, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD,
+    MF_ENABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD,
 };
 
 /// Lets files be dropped on the window; they arrive as `WM_DROPFILES`.
@@ -55,11 +55,16 @@ pub fn resolve_shortcut(path: &str) -> Option<(String, Vec<String>)> {
     }
 }
 
-/// Shows a context menu at the cursor and returns the index of the chosen entry.
+/// Shows a context menu at the cursor and returns the index of the chosen entry; a label of `-`
+/// is a separator.
 pub fn popup_menu(hwnd: HWND, items: &[(&str, bool)]) -> Option<usize> {
     unsafe {
         let menu = CreatePopupMenu().ok()?;
         for (index, (label, enabled)) in items.iter().enumerate() {
+            if *label == "-" {
+                let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+                continue;
+            }
             let flags = MF_STRING | if *enabled { MF_ENABLED } else { MF_GRAYED };
             let _ = AppendMenuW(menu, flags, index + 1, &HSTRING::from(*label));
         }

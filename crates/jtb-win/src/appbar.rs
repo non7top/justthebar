@@ -75,6 +75,20 @@ impl AppBar {
         self.edge
     }
 
+    pub fn window(&self) -> HWND {
+        self.hwnd
+    }
+
+    /// What Explorer offers `other` for this bar's edge of its monitor. Smaller than the monitor
+    /// when Explorer holds this bar's registration.
+    pub fn probe(&self, other: HWND) -> RECT {
+        let mut abd = data(other);
+        abd.uEdge = abe(self.edge);
+        abd.rc = self.monitor;
+        unsafe { SHAppBarMessage(ABM_QUERYPOS, &mut abd) };
+        abd.rc
+    }
+
     pub fn callback_message(&self) -> u32 {
         self.callback_message
     }
@@ -185,15 +199,27 @@ impl AppBar {
     }
 
     /// Handles the appbar callback message: `notification` is the wParam, `value` the lParam.
-    /// Returns a description when the position was recomputed.
-    pub fn on_callback(&self, notification: usize, value: isize) -> Option<String> {
+    /// Returns a description of what was done. A position change is left alone while a fullscreen
+    /// window is up, since reserving the edge again raises the bar over it.
+    pub fn on_callback(
+        &self,
+        notification: usize,
+        value: isize,
+        fullscreen_active: bool,
+    ) -> Option<String> {
         match notification as u32 {
+            ABN_POSCHANGED if fullscreen_active => {
+                Some("position change ignored during fullscreen".to_string())
+            }
             ABN_POSCHANGED => Some(self.set_pos()),
             ABN_FULLSCREENAPP => {
                 self.set_fullscreen(value != 0);
-                None
+                Some(format!(
+                    "fullscreen app {}",
+                    if value != 0 { "entered" } else { "left" }
+                ))
             }
-            _ => None,
+            _ => Some(format!("value {value}")),
         }
     }
 
@@ -218,8 +244,15 @@ impl AppBar {
     pub fn reregister(&self) -> String {
         let mut abd = data(self.hwnd);
         abd.uCallbackMessage = self.callback_message;
-        unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
-        self.set_pos()
+        let registered = unsafe { SHAppBarMessage(ABM_NEW, &mut abd) };
+        format!("registration answer {registered}; {}", self.set_pos())
+    }
+
+    /// Removes the registration and makes it again, which makes Explorer work out the work area
+    /// from scratch.
+    pub fn rebuild(&self) -> String {
+        self.remove();
+        self.reregister()
     }
 
     pub fn activate(&self) {

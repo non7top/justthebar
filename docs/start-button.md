@@ -22,6 +22,24 @@ In `jtb.json`:
 
 Every key but `enabled` is optional and the values above are the defaults.
 
+`"win_key": true` (the default) makes a lone press of the Windows key open the menu from the Start
+button of the bar on the monitor under the cursor. The bar watches the key with a low-level keyboard
+hook, swallows the release of a lone press and replays it behind an unassigned key press so that
+Open-Shell and Windows see a key combination and stay quiet. Win+other keys are not touched. Set it
+to `false` to leave the key to Open-Shell, which opens its menu at the bottom-left.
+
+`"menu": "auto"` (the default) opens Open-Shell's menu as described below when the file named by
+`command` exists, and the bar's own flat two-pane menu when it does not. `"openshell"` and `"stock"`
+force one of the two; the stock menu ignores `command`, `args` and `in_process`.
+
+## Right click
+
+Right click on the Start button shows Open-Shell's own context menu: Windows Explorer (This PC),
+Open (your Start Menu folder), Open All Users, Settings (`StartMenu.exe -settings`) and
+Exit (`StartMenu.exe -exit`). Shift+right click, and a right click when the built-in menu is used,
+do nothing. Open-Shell's Open Pinned and Help entries, its Win+X menu and its `ExplorerPath`
+setting are not read or used.
+
 ## Menu position
 
 Open-Shell works out where to put its menu from Explorer's own (hidden) taskbar, so on a custom bar

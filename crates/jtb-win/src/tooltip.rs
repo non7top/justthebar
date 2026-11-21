@@ -3,7 +3,7 @@ use std::cell::Cell;
 use std::mem::{offset_of, size_of};
 
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     DrawTextW, GetDC, GetStockObject, ReleaseDC, SelectObject, DEFAULT_GUI_FONT, DT_CALCRECT,
     DT_NOPREFIX, DT_WORDBREAK, HGDIOBJ,
@@ -14,8 +14,10 @@ use windows::Win32::UI::Controls::{
     TTF_TRACK, TTM_ADDTOOLW, TTM_ADJUSTRECT, TTM_DELTOOLW, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE,
     TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
 };
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, SendMessageW, WINDOW_STYLE, WM_GETFONT, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DestroyWindow, SendMessageW, HTTRANSPARENT, WINDOW_STYLE, WM_GETFONT,
+    WM_NCHITTEST, WS_EX_TOPMOST, WS_POPUP,
 };
 
 const MAX_WIDTH: isize = 320;
@@ -54,6 +56,22 @@ fn send(
     unsafe { SendMessageW(window, message, Some(WPARAM(wparam)), Some(LPARAM(lparam))) }.0
 }
 
+/// Keeps the pointer from landing on the tooltip: the bar would get a leave, hide it, see the
+/// pointer move again and show it, in a loop.
+unsafe extern "system" fn pass_mouse_through(
+    window: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == WM_NCHITTEST {
+        return LRESULT(HTTRANSPARENT as isize);
+    }
+    unsafe { DefSubclassProc(window, msg, wparam, lparam) }
+}
+
 fn create(owner: HWND) -> Option<HWND> {
     unsafe {
         let init = INITCOMMONCONTROLSEX {
@@ -77,6 +95,7 @@ fn create(owner: HWND) -> Option<HWND> {
         )
         .ok()?;
         send(window, TTM_SETMAXTIPWIDTH, 0, None, MAX_WIDTH);
+        let _ = SetWindowSubclass(window, Some(pass_mouse_through), 1, 0);
         Some(window)
     }
 }
