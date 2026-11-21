@@ -3,15 +3,28 @@ name: Build
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or tag to build; the triggering ref when empty
+        type: string
+        default: ''
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      artifact-url: ${{ steps.upload.outputs.artifact-url }}
     env:
       TARGET: x86_64-pc-windows-gnu
       RUST_VERSION: 1.99.1
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/cache@v4
         with:
@@ -50,6 +63,7 @@ jobs:
         run: cargo build --release --target "$TARGET"
 
       - name: Upload exe and hook DLL
+        id: upload
         uses: actions/upload-artifact@v5
         with:
           name: jtb-app
@@ -57,3 +71,33 @@ jobs:
             target/x86_64-pc-windows-gnu/release/jtb-app.exe
             target/x86_64-pc-windows-gnu/release/jtb_hook.dll
           if-no-files-found: error
+
+  comment:
+    needs: build
+    # A fork's token is read-only, so there is nothing to post with.
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.build.result }}
+          ARTIFACT_URL: ${{ needs.build.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          marker='<!-- jtb-build -->'
+          if [ "$RESULT" = success ]; then
+            body="$marker"$'\n'"Build passed for ${SHA:0:7}: [jtb-app.exe and jtb_hook.dll]($ARTIFACT_URL), [run]($RUN_URL)."
+          else
+            body="$marker"$'\n'"Build ${RESULT} for ${SHA:0:7}, see the [run]($RUN_URL)."
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$body"
+          fi
