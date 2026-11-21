@@ -724,6 +724,9 @@ pub fn note_start_bar(edge: Edge, rect: RECT, window: HWND) {
 }
 
 fn on_taskbar_pos(process: u32) -> Option<(u32, RECT)> {
+    if bar::fullscreen_active() {
+        return None;
+    }
     let pos = START_BAR.get()?;
     log(&format!(
         "start: taskbar position asked by process {process} -> {pos:?}"

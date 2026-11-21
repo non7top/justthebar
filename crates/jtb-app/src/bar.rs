@@ -249,6 +249,10 @@ pub fn follow_fullscreen() -> Option<String> {
         let behind = covered == Some(info.rcMonitor);
         let was = BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd));
         let topmost = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST.0 != 0;
+        // Recorded before the window moves so the z-order change itself is not reported to Explorer.
+        if behind && !was {
+            BEHIND_FULLSCREEN.with_borrow_mut(|hidden| hidden.push(hwnd));
+        }
         if behind && (!was || topmost) {
             unsafe {
                 let _ = SetWindowPos(
@@ -275,13 +279,9 @@ pub fn follow_fullscreen() -> Option<String> {
             }
         }
         if behind != was {
-            BEHIND_FULLSCREEN.with_borrow_mut(|hidden| {
-                if behind {
-                    hidden.push(hwnd);
-                } else {
-                    hidden.retain(|h| *h != hwnd);
-                }
-            });
+            if !behind {
+                BEHIND_FULLSCREEN.with_borrow_mut(|hidden| hidden.retain(|h| *h != hwnd));
+            }
             line = Some(format!(
                 "fullscreen: bar {:#x} {} on monitor {:?}; {}",
                 hwnd.0 as usize,
@@ -388,6 +388,9 @@ pub fn ensure_reserved() -> Option<String> {
 pub fn invalidate_all() {
     let hwnds: Vec<HWND> = BARS.with_borrow(|bars| bars.iter().map(|b| b.hwnd).collect());
     for hwnd in hwnds {
+        if BEHIND_FULLSCREEN.with_borrow(|hidden| hidden.contains(&hwnd)) {
+            continue;
+        }
         unsafe {
             let _ = InvalidateRect(Some(hwnd), None, false);
         }
@@ -874,7 +877,9 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             _ if bar.is_some_and(|b| b.callback_message() == msg) => {
                 if let Some(bar) = bar {
-                    bar.on_callback(wparam.0, lparam.0);
+                    if let Some(note) = bar.on_callback(wparam.0, lparam.0, fullscreen_active()) {
+                        log(&format!("appbar: notification {}: {note}", wparam.0));
+                    }
                 }
                 LRESULT(0)
             }
@@ -882,13 +887,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             // clicking the active window's button could never minimize it.
             WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
             WM_ACTIVATE => {
-                if let Some(bar) = bar {
+                if let Some(bar) = bar.filter(|_| !fullscreen_active()) {
                     bar.activate();
                 }
                 DefWindowProcW(hwnd, msg, wparam, lparam)
             }
             WM_WINDOWPOSCHANGED => {
-                if let Some(bar) = bar {
+                if let Some(bar) = bar.filter(|_| !fullscreen_active()) {
                     bar.window_pos_changed();
                 }
                 DefWindowProcW(hwnd, msg, wparam, lparam)

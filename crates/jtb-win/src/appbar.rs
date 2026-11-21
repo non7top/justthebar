@@ -199,15 +199,27 @@ impl AppBar {
     }
 
     /// Handles the appbar callback message: `notification` is the wParam, `value` the lParam.
-    /// Returns a description when the position was recomputed.
-    pub fn on_callback(&self, notification: usize, value: isize) -> Option<String> {
+    /// Returns a description of what was done. A position change is left alone while a fullscreen
+    /// window is up, since reserving the edge again raises the bar over it.
+    pub fn on_callback(
+        &self,
+        notification: usize,
+        value: isize,
+        fullscreen_active: bool,
+    ) -> Option<String> {
         match notification as u32 {
+            ABN_POSCHANGED if fullscreen_active => {
+                Some("position change ignored during fullscreen".to_string())
+            }
             ABN_POSCHANGED => Some(self.set_pos()),
             ABN_FULLSCREENAPP => {
                 self.set_fullscreen(value != 0);
-                None
+                Some(format!(
+                    "fullscreen app {}",
+                    if value != 0 { "entered" } else { "left" }
+                ))
             }
-            _ => None,
+            _ => Some(format!("value {value}")),
         }
     }
 
