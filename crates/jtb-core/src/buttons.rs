@@ -221,8 +221,9 @@ pub fn bar_layout(
 }
 
 /// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar;
-/// shrunk to fit the width on side bars, where they form one row). They sit just before the tray
-/// cells, in order, and their rects follow the tray cells in `tray`.
+/// on side bars they wrap onto further rows when one row is too narrow, and only a widget wider
+/// than the bar alone is shrunk). They sit just before the tray cells, in order, and their rects
+/// follow the tray cells in `tray`.
 #[allow(clippy::too_many_arguments)]
 pub fn bar_layout_with_widgets(
     edge: Edge,
@@ -262,22 +263,38 @@ pub fn bar_layout_with_widgets(
         } else {
             let each = WIDGET_THICK * scale;
             let room = (width - 2.0 * pad).max(0.0);
-            let wanted: f32 =
-                widgets.iter().map(|len| len * scale).sum::<f32>() + gap * (count - 1.0);
-            let shrink = if wanted > room { room / wanted } else { 1.0 };
-            let top = (clock.top - extent - pad - each).max(0.0);
-            let mut left = pad;
+            let mut rows: Vec<Vec<f32>> = Vec::new();
+            let mut used = 0.0;
             for len in widgets {
-                let right = left + len * scale * shrink;
-                cells.push(Rect {
-                    left,
-                    top,
-                    right,
-                    bottom: top + each,
-                });
-                left = right + gap * shrink;
+                let length = (len * scale).min(room);
+                match rows.last_mut() {
+                    Some(row) if used + gap + length <= room => {
+                        row.push(length);
+                        used += gap + length;
+                    }
+                    _ => {
+                        rows.push(vec![length]);
+                        used = length;
+                    }
+                }
             }
-            reserved += each + pad;
+            let row_count = rows.len() as f32;
+            let block = row_count * each + (row_count - 1.0) * gap;
+            let first_top = (clock.top - extent - pad - block).max(0.0);
+            for (i, row) in rows.iter().enumerate() {
+                let top = first_top + i as f32 * (each + gap);
+                let mut left = pad;
+                for length in row {
+                    cells.push(Rect {
+                        left,
+                        top,
+                        right: left + length,
+                        bottom: top + each,
+                    });
+                    left += length + gap;
+                }
+            }
+            reserved += block + pad;
         }
     }
     BarLayout {
@@ -541,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn bar_widgets_form_one_row_above_the_tray_on_a_side_bar() {
+    fn bar_widgets_form_one_row_above_the_tray_on_a_side_bar_when_they_fit() {
         let layout = bar_layout_with_widgets(
             Edge::Right,
             200.0,
@@ -550,7 +567,7 @@ mod tests {
             2,
             None,
             3,
-            &[50.0, 50.0, 50.0, 50.0],
+            &[40.0, 40.0, 40.0, 40.0],
             default_clock_extent(Edge::Right),
         );
         assert_eq!(layout.tray.len(), 7);
@@ -561,6 +578,48 @@ mod tests {
         assert_eq!(row[0].bottom - row[0].top, 28.0);
         assert!(row[0].bottom <= layout.tray[0].top);
         assert!(layout.rows[1].bottom <= row[0].top);
+    }
+
+    #[test]
+    fn bar_widgets_wrap_to_a_second_row_instead_of_shrinking_on_a_narrow_side_bar() {
+        let lengths = [36.0, 32.0, 60.0, 68.0];
+        let layout = bar_layout_with_widgets(
+            Edge::Right,
+            168.0,
+            1080.0,
+            1.0,
+            2,
+            None,
+            3,
+            &lengths,
+            default_clock_extent(Edge::Right),
+        );
+        let row = &layout.tray[3..];
+        for (cell, length) in row.iter().zip(lengths) {
+            assert_eq!(cell.right - cell.left, length);
+            assert!(cell.right <= 168.0);
+        }
+        assert_eq!(row[0].top, row[2].top);
+        assert!(row[3].top > row[2].top);
+        assert_eq!(row[3].left, row[0].left);
+        assert!(row[3].bottom <= layout.tray[0].top);
+        assert!(layout.rows[1].bottom <= row[0].top);
+    }
+
+    #[test]
+    fn a_widget_wider_than_a_side_bar_is_shrunk_to_it() {
+        let layout = bar_layout_with_widgets(
+            Edge::Right,
+            60.0,
+            1080.0,
+            1.0,
+            0,
+            None,
+            0,
+            &[90.0],
+            default_clock_extent(Edge::Right),
+        );
+        assert_eq!(layout.tray[0].right - layout.tray[0].left, 52.0);
     }
 
     #[test]

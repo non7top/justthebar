@@ -8,7 +8,7 @@ them in `jtb.json`, in the order they should appear:
 ```
 
 An entry is a name, or `{ "name": "battery", "place": "tray" }`. `place` is `bar` (the default: on
-the bar itself, in one row above the notification area on a side bar, between the task buttons and
+the bar itself, above the notification area on a side bar (a full row wraps to a second one, so no label is cut), between the task buttons and
 the tray on a top or bottom bar) or `tray` (a small cell in the notification area of the tray bar,
 left of the clock). A change applies while the bar runs. An unknown name is skipped and logged as
 `widgets: unknown widget`.

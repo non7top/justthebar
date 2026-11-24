@@ -14,7 +14,7 @@ pub struct WidgetState {
 
 /// How long (pixels at 100% scale) a widget on the bar is: its glyph and text with some padding.
 pub fn bar_length(state: &WidgetState) -> f32 {
-    let text = state.label.chars().count() as f32 * 8.0;
+    let text = state.label.chars().count() as f32 * 9.0;
     let symbol = if state.symbol.is_empty() {
         0.0
     } else if text > 0.0 {
