@@ -23,7 +23,7 @@ jobs:
     outputs:
       tag: ${{ steps.find_tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -62,7 +62,7 @@ jobs:
       TAG: ${{ needs.check-release-tag.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.check-release-tag.outputs.tag }}
 
