@@ -308,6 +308,7 @@ pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
                 symbol: shown.symbol.clone(),
                 label: shown.state.label.clone(),
                 sizes: widget::sizes(&shown.state, shown.label_width),
+                icon_size: shown.state.icon_size(),
                 hovered: hovered == Some(at),
             })
             .collect()

@@ -21,10 +21,19 @@ impl WidgetState {
     pub fn has_art(&self) -> bool {
         self.icon.is_some() || !self.symbol.is_empty()
     }
+
+    /// Size of the icon on the bar in pixels at 100% scale; the battery has no label and is larger.
+    pub fn icon_size(&self) -> f32 {
+        match self.icon {
+            Some(WidgetIcon::Battery { .. }) => BATTERY_ICON,
+            _ => ICON,
+        }
+    }
 }
 
-/// Size of the icon on the bar, in pixels at 100% scale.
+/// Size of an icon on the bar, in pixels at 100% scale.
 pub const ICON: f32 = 20.0;
+const BATTERY_ICON: f32 = 26.0;
 /// Space around a widget's content, and between its icon and label.
 pub const PAD: f32 = 2.0;
 pub const GAP: f32 = 3.0;
@@ -58,6 +67,7 @@ pub fn sizes(state: &WidgetState, label_width: f32) -> WidgetSizes {
     } else {
         label_width + SLACK
     };
+    let icon = state.icon_size();
     let floor = ICON + 2.0 * PAD;
     if !state.has_art() {
         let own = (text + 2.0 * PAD).max(floor);
@@ -67,11 +77,11 @@ pub fn sizes(state: &WidgetState, label_width: f32) -> WidgetSizes {
             compact: own,
         };
     }
-    let side = if text > 0.0 { ICON + GAP + text } else { ICON };
+    let side = if text > 0.0 { icon + GAP + text } else { icon };
     WidgetSizes {
         side: side + 2.0 * PAD,
-        stacked: ICON.max(text) + 2.0 * PAD,
-        compact: floor,
+        stacked: icon.max(text) + 2.0 * PAD,
+        compact: (icon + 2.0 * PAD).max(floor),
     }
 }
 
@@ -89,7 +99,8 @@ pub enum Power {
     Plugged,
 }
 
-/// The battery icon for `percent` (0 to 100) and the power source, with the percentage.
+/// The battery icon for `percent` (0 to 100) and the power source. The fill shows the level, so
+/// the bar has no label; the tooltip has the percentage.
 pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     let note = match power {
         Power::Battery => "",
@@ -99,13 +110,13 @@ pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     WidgetState {
         icon: Some(WidgetIcon::Battery { percent, power }),
         symbol: String::new(),
-        label: format!("{percent}%"),
+        label: String::new(),
         tooltip: format!("Battery: {percent}%{note}"),
         tint: None,
     }
 }
 
-/// The speaker for `percent` (0 to 100), or the muted one, with the percentage.
+/// The speaker for `percent` (0 to 100), or the muted one; the tooltip has the percentage.
 pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
     let silent = muted || percent == 0;
     let level = if silent {
@@ -117,10 +128,10 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
     } else {
         3
     };
-    let (label, tooltip) = if muted {
-        (String::new(), "Speakers: muted".to_string())
+    let tooltip = if muted {
+        "Speakers: muted".to_string()
     } else {
-        (format!("{percent}%"), format!("Speakers: {percent}%"))
+        format!("Speakers: {percent}%")
     };
     WidgetState {
         icon: Some(WidgetIcon::Volume {
@@ -128,7 +139,7 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
             muted: silent,
         }),
         symbol: String::new(),
-        label,
+        label: String::new(),
         tooltip,
         tint: None,
     }
@@ -218,7 +229,7 @@ mod tests {
             "Battery: 100%, plugged in"
         );
         assert_eq!(battery_state(80, Power::Battery).tooltip, "Battery: 80%");
-        assert_eq!(battery_state(80, Power::Battery).label, "80%");
+        assert_eq!(battery_state(80, Power::Battery).label, "");
     }
 
     #[test]
@@ -231,7 +242,8 @@ mod tests {
         assert_eq!(icon(50, false), volume(2, false));
         assert_eq!(icon(90, false), volume(3, false));
         assert_eq!(volume_state(50, true).label, "");
-        assert_eq!(volume_state(50, false).label, "50%");
+        assert_eq!(volume_state(50, false).label, "");
+        assert_eq!(volume_state(50, false).tooltip, "Speakers: 50%");
     }
 
     #[test]
@@ -264,14 +276,26 @@ mod tests {
 
     #[test]
     fn sizes_grow_with_the_label_and_shrink_in_the_stacked_and_compact_layouts() {
-        let battery = sizes(&battery_state(87, Power::Battery), 26.0);
-        assert_eq!(battery.side, 2.0 + 20.0 + 3.0 + 28.0 + 2.0);
-        assert_eq!(battery.stacked, 2.0 + 28.0 + 2.0);
-        assert_eq!(battery.compact, 24.0);
-        assert!(battery.compact < battery.stacked && battery.stacked < battery.side);
+        let state = WidgetState {
+            label: "100%".to_string(),
+            ..volume_state(80, false)
+        };
+        let labeled = sizes(&state, 26.0);
+        assert_eq!(labeled.side, 2.0 + 20.0 + 3.0 + 28.0 + 2.0);
+        assert_eq!(labeled.stacked, 2.0 + 28.0 + 2.0);
+        assert_eq!(labeled.compact, 24.0);
+        assert!(labeled.compact < labeled.stacked && labeled.stacked < labeled.side);
         let language = sizes(&language_state("en"), 20.0);
         assert_eq!(language.side, language.compact);
         assert_eq!(language.side, 2.0 + 22.0 + 2.0);
+    }
+
+    #[test]
+    fn the_battery_icon_is_larger_than_the_others() {
+        let battery = battery_state(80, Power::Battery);
+        assert_eq!(battery.icon_size(), 26.0);
+        assert_eq!(volume_state(80, false).icon_size(), 20.0);
+        assert_eq!(sizes(&battery, 0.0).side, 30.0);
     }
 
     #[test]

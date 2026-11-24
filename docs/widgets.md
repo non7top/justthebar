@@ -15,20 +15,21 @@ left of the clock). A change applies while the bar runs. An unknown name is skip
 
 | Name | Shows | Click |
 |---|---|---|
-| `battery` | a vertical battery drawn by the bar, filled to the level with the percentage: green from 50%, yellow from 25%, orange above 15%, red at 15% or less; green with a bolt while the power cable is connected (charging, or plugged in and full); hidden on a machine without a battery | opens the Windows quick settings |
+| `battery` | a vertical battery drawn by the bar, larger than the other icons and filled to the level (the percentage is in the tooltip): green from 50%, yellow from 25%, orange above 15%, red at 15% or less; green with a bolt while the power cable is connected (charging, or plugged in and full); hidden on a machine without a battery | opens the Windows quick settings |
 | `language` | the two letter code of the input language of the foreground window, such as `EN` (three letters for a language that has no two letter code) | opens a menu of the installed keyboard layouts; the choice is applied to the window that had the focus |
 | `network` | Wi-Fi signal bars, a plug for a cable, a globe when offline | opens the Windows quick settings |
-| `volume` | a speaker drawn by the bar with up to three waves for the level, or a cross when muted or at 0%, with the percentage | opens the Windows quick settings |
+| `volume` | a speaker drawn by the bar with up to three waves for the level, or a cross when muted or at 0% (the percentage is in the tooltip) | opens the Windows quick settings |
 
 Planned: a calendar on the clock, VPN, memory and CPU, weather.
 
 ## Layout on a side bar
 
 The widgets sit in one row. Each cell is as long as its content: the measured width of the label plus
-the icon. If the row of icon and label side by side is wider than the bar, the labels move under the
-icons; if that is still too wide, only the icons are shown (the tooltip has the rest). A cell is
-never shrunk, so a label is never cut to dots. The row is stretched to the width of the bar with the
-content centered in each cell. Only when even the icons do not fit does the row wrap to a second one.
+the icon. If the row is wider than the bar, icons and text are scaled down together to fit, to 75% at
+most; if that is still too wide, the labels move under the icons, and then only the icons are shown
+(the tooltip has the rest). A label is never cut to dots. The row is stretched to the width of the
+bar with the content centered in each cell. Only when even the icons do not fit does the row wrap
+to a second one.
 
 ## How they are built
 

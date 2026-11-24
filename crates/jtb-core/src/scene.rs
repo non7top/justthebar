@@ -52,6 +52,8 @@ pub struct Label {
     pub color: Color,
     /// Left for task buttons; the clock lines each choose their own.
     pub align: Align,
+    /// Factor on the scene's font size; below 1.0 for text on widgets scaled down to fit.
+    pub font_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -117,6 +119,8 @@ pub struct WidgetView {
     pub label: String,
     /// How long the widget is along the bar in each layout, in pixels at 100% scale.
     pub sizes: WidgetSizes,
+    /// Size of the icon in pixels at 100% scale.
+    pub icon_size: f32,
     pub hovered: bool,
 }
 
@@ -264,6 +268,7 @@ pub fn build_scene_with_widgets(
             text: line.text.clone(),
             color: white,
             align: line.align,
+            font_scale: 1.0,
         })
         .collect();
     let sizes: Vec<[f32; 3]> = widgets.iter().map(|w| w.sizes.array()).collect();
@@ -301,25 +306,33 @@ pub fn build_scene_with_widgets(
             });
         }
         let has_label = !view.label.is_empty();
+        let shrink = plan.shrink;
+        let pad = widget::PAD * scale * shrink;
         let Some(symbol) = &view.symbol else {
             if has_label {
+                let mut rect = *cell;
+                if plan.tier == WidgetTier::Stacked {
+                    // Text alone sits on the row of the icons of the other widgets.
+                    rect.top = cell.top + widget::PAD * scale;
+                    rect.bottom = rect.top + widget::ICON * scale;
+                }
                 labels.push(Label {
-                    rect: *cell,
+                    rect,
                     text: view.label.clone(),
                     color: white,
                     align: Align::Center,
+                    font_scale: shrink,
                 });
             }
             continue;
         };
-        let size = widget::ICON * scale;
-        let pad = widget::PAD * scale;
+        let size = view.icon_size * scale * shrink;
         let middle = (cell.top + cell.bottom - size) / 2.0;
         let centered = (cell.left + cell.right - size) / 2.0;
         let (left, top) = match plan.tier {
             WidgetTier::SideBySide if has_label => {
                 // A cell stretched past the widget's own length centers its content.
-                let spare = (cell.right - cell.left - view.sizes.side * scale).max(0.0);
+                let spare = (cell.right - cell.left - view.sizes.side * scale * shrink).max(0.0);
                 (cell.left + pad + spare / 2.0, middle)
             }
             WidgetTier::Stacked => (centered, cell.top + pad),
@@ -341,12 +354,13 @@ pub fn build_scene_with_widgets(
         match plan.tier {
             WidgetTier::SideBySide => labels.push(Label {
                 rect: Rect {
-                    left: left + size + widget::GAP * scale,
+                    left: left + size + widget::GAP * scale * shrink,
                     ..*cell
                 },
                 text: view.label.clone(),
                 color: white,
                 align: Align::Left,
+                font_scale: shrink,
             }),
             WidgetTier::Stacked => labels.push(Label {
                 rect: Rect {
@@ -356,6 +370,7 @@ pub fn build_scene_with_widgets(
                 text: view.label.clone(),
                 color: white,
                 align: Align::Center,
+                font_scale: 1.0,
             }),
             WidgetTier::GlyphOnly => {}
         }
@@ -507,6 +522,7 @@ pub fn build_scene_with_widgets(
                 ..white
             },
             align: Align::Left,
+            font_scale: 1.0,
         });
     }
     Scene {
