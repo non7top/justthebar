@@ -1,12 +1,12 @@
 //! Small reads of system state for the bar widgets.
-use jtb_core::widget::Network;
+use jtb_core::widget::{Network, Power};
 use windows::Win32::Globalization::{GetLocaleInfoW, LOCALE_SISO639LANGNAME2};
 use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
-/// Battery charge in percent and whether it is charging; none on a machine without a battery.
-pub fn battery() -> Option<(u8, bool)> {
+/// Battery charge in percent and where the power comes from; none on a machine without a battery.
+pub fn battery() -> Option<(u8, Power)> {
     let mut status = SYSTEM_POWER_STATUS::default();
     unsafe { GetSystemPowerStatus(&mut status) }.ok()?;
     const NO_BATTERY: u8 = 128;
@@ -15,8 +15,14 @@ pub fn battery() -> Option<(u8, bool)> {
         return None;
     }
     let percent = status.BatteryLifePercent.min(100);
-    let charging = status.BatteryFlag & 8 != 0 || status.ACLineStatus == 1 && percent < 100;
-    Some((percent, charging))
+    let cable = status.ACLineStatus == 1;
+    let charging = status.BatteryFlag & 8 != 0 || cable && percent < 100;
+    let power = match (charging, cable) {
+        (true, _) => Power::Charging,
+        (false, true) => Power::Plugged,
+        (false, false) => Power::Battery,
+    };
+    Some((percent, power))
 }
 
 /// The three letter ISO 639-2 code (`eng`, `rus`) of the keyboard layout of the foreground window.

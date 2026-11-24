@@ -1,69 +1,121 @@
 //! What the built-in bar widgets show, as plain data. Reading the system is up to the app.
+use crate::widgeticon::WidgetIcon;
 
-/// One widget's current look: a symbol glyph and/or a short label, plus its tooltip.
+/// One widget's current look: an icon (drawn by the bar, or a glyph of the symbol font) and/or a
+/// short label, plus its tooltip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WidgetState {
-    /// A glyph of the symbol font; empty for a text-only widget.
+    /// An icon the bar draws itself; takes the place of `symbol`.
+    pub icon: Option<WidgetIcon>,
+    /// A glyph of the symbol font; empty for a text-only widget or one with a drawn icon.
     pub symbol: String,
-    /// Short text next to the glyph, such as `87%` or `EN`; may be empty.
+    /// Short text next to the icon, such as `87%` or `EN`; may be empty.
     pub label: String,
     pub tooltip: String,
     /// Color of the glyph (red, green, blue); none draws it in the bar's text color.
     pub tint: Option<[u8; 3]>,
 }
 
-/// How long (pixels at 100% scale) a widget on the bar is: its glyph and text with some padding.
-pub fn bar_length(state: &WidgetState) -> f32 {
-    let text = state.label.chars().count() as f32 * 9.0;
-    let symbol = if state.symbol.is_empty() {
+impl WidgetState {
+    /// Whether there is an icon or glyph, as opposed to text alone.
+    pub fn has_art(&self) -> bool {
+        self.icon.is_some() || !self.symbol.is_empty()
+    }
+}
+
+/// Size of the icon on the bar, in pixels at 100% scale.
+pub const ICON: f32 = 20.0;
+/// Space around a widget's content, and between its icon and label.
+pub const PAD: f32 = 2.0;
+pub const GAP: f32 = 3.0;
+/// Height of a label line under the icon in the stacked layout.
+pub const LABEL_LINE: f32 = 19.0;
+/// Extra width on a measured label so rounding never trims it.
+const SLACK: f32 = 2.0;
+/// Thickness of a widget cell on a side bar: icon and label side by side, or stacked.
+pub const SIDE_THICK: f32 = 28.0;
+pub const STACKED_THICK: f32 = PAD + ICON + 1.0 + LABEL_LINE + PAD;
+
+/// How long a widget is along the bar in each layout: icon and label side by side, the label under
+/// the icon, and the icon alone (a text-only widget keeps its text).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WidgetSizes {
+    pub side: f32,
+    pub stacked: f32,
+    pub compact: f32,
+}
+
+impl WidgetSizes {
+    pub fn array(self) -> [f32; 3] {
+        [self.side, self.stacked, self.compact]
+    }
+}
+
+/// The lengths (pixels at 100% scale) of a widget whose label measures `label_width` pixels.
+pub fn sizes(state: &WidgetState, label_width: f32) -> WidgetSizes {
+    let text = if state.label.is_empty() {
         0.0
-    } else if text > 0.0 {
-        24.0
     } else {
-        20.0
+        label_width + SLACK
     };
-    (12.0 + symbol + text).max(28.0)
+    let floor = ICON + 2.0 * PAD;
+    if !state.has_art() {
+        let own = (text + 2.0 * PAD).max(floor);
+        return WidgetSizes {
+            side: own,
+            stacked: own,
+            compact: own,
+        };
+    }
+    let side = if text > 0.0 { ICON + GAP + text } else { ICON };
+    WidgetSizes {
+        side: side + 2.0 * PAD,
+        stacked: ICON.max(text) + 2.0 * PAD,
+        compact: floor,
+    }
 }
 
 fn glyph(code: u32) -> String {
     char::from_u32(code).map(String::from).unwrap_or_default()
 }
 
-/// The battery glyph for `percent` (0 to 100), charging or not (11 levels), with the percentage.
-pub fn battery_state(percent: u8, charging: bool) -> WidgetState {
-    let level = (u32::from(percent.min(100)) + 5) / 10;
-    let code = match (charging, level) {
-        (false, 10) => 0xE83F,
-        (false, level) => 0xE850 + level,
-        (true, 10) => 0xEA93,
-        (true, 9) => 0xE862,
-        (true, level) => 0xE85A + level,
+/// Where the machine gets its power from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Power {
+    Battery,
+    /// The power cable is connected and the battery is charging.
+    Charging,
+    /// The power cable is connected and the battery is not charging, as when it is full.
+    Plugged,
+}
+
+/// The battery icon for `percent` (0 to 100) and the power source, with the percentage.
+pub fn battery_state(percent: u8, power: Power) -> WidgetState {
+    let note = match power {
+        Power::Battery => "",
+        Power::Charging => ", charging",
+        Power::Plugged => ", plugged in",
     };
-    let state = if charging { ", charging" } else { "" };
     WidgetState {
-        symbol: glyph(code),
+        icon: Some(WidgetIcon::Battery { percent, power }),
+        symbol: String::new(),
         label: format!("{percent}%"),
-        tooltip: format!("Battery: {percent}%{state}"),
-        tint: if charging {
-            Some([0x6C, 0xCB, 0x5F])
-        } else if percent <= 15 {
-            Some([0xFF, 0x99, 0xA4])
-        } else {
-            None
-        },
+        tooltip: format!("Battery: {percent}%{note}"),
+        tint: None,
     }
 }
 
-/// The speaker glyph for `percent` (0 to 100), or the muted one, with the percentage.
+/// The speaker for `percent` (0 to 100), or the muted one, with the percentage.
 pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
-    let code = if muted || percent == 0 {
-        0xE74F
+    let silent = muted || percent == 0;
+    let level = if silent {
+        0
     } else if percent < 34 {
-        0xE993
+        1
     } else if percent < 67 {
-        0xE994
+        2
     } else {
-        0xE995
+        3
     };
     let (label, tooltip) = if muted {
         (String::new(), "Speakers: muted".to_string())
@@ -71,7 +123,11 @@ pub fn volume_state(percent: u8, muted: bool) -> WidgetState {
         (format!("{percent}%"), format!("Speakers: {percent}%"))
     };
     WidgetState {
-        symbol: glyph(code),
+        icon: Some(WidgetIcon::Volume {
+            level,
+            muted: silent,
+        }),
+        symbol: String::new(),
         label,
         tooltip,
         tint: None,
@@ -110,6 +166,7 @@ pub fn network_state(network: &Network) -> WidgetState {
         }
     };
     WidgetState {
+        icon: None,
         symbol: glyph(code),
         label: String::new(),
         tooltip,
@@ -125,6 +182,7 @@ pub fn language_state(iso_code: &str) -> WidgetState {
         .flat_map(char::to_uppercase)
         .collect();
     WidgetState {
+        icon: None,
         symbol: String::new(),
         tooltip: format!("Input language: {code}"),
         label: code,
@@ -137,35 +195,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_charging_battery_is_green_and_a_low_one_red() {
-        assert_eq!(battery_state(60, true).tint, Some([0x6C, 0xCB, 0x5F]));
-        assert_eq!(battery_state(10, false).tint, Some([0xFF, 0x99, 0xA4]));
-        assert_eq!(battery_state(60, false).tint, None);
+    fn battery_state_carries_the_level_and_power() {
+        assert_eq!(
+            battery_state(60, Power::Charging).icon,
+            Some(WidgetIcon::Battery {
+                percent: 60,
+                power: Power::Charging
+            })
+        );
+        assert!(battery_state(60, Power::Battery).symbol.is_empty());
     }
 
     #[test]
-    fn battery_levels_map_to_eleven_glyphs() {
-        assert_eq!(battery_state(0, false).symbol, "\u{E850}");
-        assert_eq!(battery_state(52, false).symbol, "\u{E855}");
-        assert_eq!(battery_state(100, false).symbol, "\u{E83F}");
-        assert_eq!(battery_state(100, true).symbol, "\u{EA93}");
-        assert_eq!(battery_state(0, true).symbol, "\u{E85A}");
-        assert_eq!(battery_state(90, true).symbol, "\u{E862}");
+    fn battery_tooltip_says_how_it_is_powered() {
+        assert_eq!(
+            battery_state(80, Power::Charging).tooltip,
+            "Battery: 80%, charging"
+        );
+        assert_eq!(
+            battery_state(100, Power::Plugged).tooltip,
+            "Battery: 100%, plugged in"
+        );
+        assert_eq!(battery_state(80, Power::Battery).tooltip, "Battery: 80%");
+        assert_eq!(battery_state(80, Power::Battery).label, "80%");
     }
 
     #[test]
-    fn battery_tooltip_says_when_charging() {
-        assert_eq!(battery_state(80, true).tooltip, "Battery: 80%, charging");
-        assert_eq!(battery_state(80, false).tooltip, "Battery: 80%");
-    }
-
-    #[test]
-    fn volume_glyph_follows_the_level_and_mute() {
-        assert_eq!(volume_state(0, false).symbol, "\u{E74F}");
-        assert_eq!(volume_state(50, true).symbol, "\u{E74F}");
-        assert_eq!(volume_state(20, false).symbol, "\u{E993}");
-        assert_eq!(volume_state(50, false).symbol, "\u{E994}");
-        assert_eq!(volume_state(90, false).symbol, "\u{E995}");
+    fn volume_icon_follows_the_level_and_mute() {
+        let icon = |percent, muted| volume_state(percent, muted).icon;
+        let volume = |level, muted| Some(WidgetIcon::Volume { level, muted });
+        assert_eq!(icon(0, false), volume(0, true));
+        assert_eq!(icon(50, true), volume(0, true));
+        assert_eq!(icon(20, false), volume(1, false));
+        assert_eq!(icon(50, false), volume(2, false));
+        assert_eq!(icon(90, false), volume(3, false));
+        assert_eq!(volume_state(50, true).label, "");
+        assert_eq!(volume_state(50, false).label, "50%");
     }
 
     #[test]
@@ -190,15 +255,31 @@ mod tests {
     fn language_is_three_capital_letters() {
         let state = language_state("eng");
         assert_eq!(state.label, "ENG");
-        assert!(state.symbol.is_empty());
+        assert!(!state.has_art());
         assert_eq!(language_state("ru").label, "RU");
     }
 
     #[test]
-    fn bar_length_grows_with_the_label() {
-        let battery = bar_length(&battery_state(87, false));
-        let language = bar_length(&language_state("eng"));
-        assert!(battery > language);
-        assert!(language >= 28.0);
+    fn sizes_grow_with_the_label_and_shrink_in_the_stacked_and_compact_layouts() {
+        let battery = sizes(&battery_state(87, Power::Battery), 26.0);
+        assert_eq!(battery.side, 2.0 + 20.0 + 3.0 + 28.0 + 2.0);
+        assert_eq!(battery.stacked, 2.0 + 28.0 + 2.0);
+        assert_eq!(battery.compact, 24.0);
+        assert!(battery.compact < battery.stacked && battery.stacked < battery.side);
+        let language = sizes(&language_state("eng"), 29.0);
+        assert_eq!(language.side, language.compact);
+        assert_eq!(language.side, 2.0 + 31.0 + 2.0);
+    }
+
+    #[test]
+    fn a_widget_without_a_label_is_icon_sized_in_every_layout() {
+        let network = sizes(
+            &network_state(&Network::Wifi {
+                name: "home".to_string(),
+                quality: 100,
+            }),
+            0.0,
+        );
+        assert_eq!([network.side, network.stacked, network.compact], [24.0; 3]);
     }
 }

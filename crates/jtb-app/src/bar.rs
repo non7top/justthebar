@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 
-use jtb_core::buttons::{bar_layout_with_widgets, hit_test, tray_icon_rect, BarLayout};
+use jtb_core::buttons::{bar_layout_with_plan, hit_test, plan_widgets, tray_icon_rect, BarLayout};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{
@@ -630,13 +630,14 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
     let views = crate::bar_views(task_monitor_of(hwnd));
     let index = bar_index(hwnd);
     let tray = crate::tray_views(index, None);
-    let lengths: Vec<f32> = crate::widget_views(index, tray.len(), None)
+    let sizes: Vec<[f32; 3]> = crate::widget_views(index, tray.len(), None)
         .iter()
-        .map(|w| w.length)
+        .map(|w| w.sizes.array())
         .collect();
+    let plan = plan_widgets(bar.edge(), width as f32, scale, &sizes);
     let clock_fmt = crate::clock_format();
     let clock_extent = jtb_core::clock::extent(&clock_fmt, bar.edge().is_horizontal());
-    bar_layout_with_widgets(
+    bar_layout_with_plan(
         bar.edge(),
         width as f32,
         height as f32,
@@ -644,7 +645,7 @@ fn layout_of(hwnd: HWND, bar: AppBar) -> BarLayout {
         views.len(),
         start_art_size(&views),
         tray.len(),
-        &lengths,
+        &plan,
         clock_extent,
     )
 }

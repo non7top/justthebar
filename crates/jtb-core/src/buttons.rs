@@ -1,4 +1,5 @@
 use crate::scene::Rect;
+use crate::widget::{SIDE_THICK, STACKED_THICK};
 use crate::Edge;
 
 const CLOCK_LONG: f32 = 80.0;
@@ -192,8 +193,60 @@ pub struct BarLayout {
     pub tray: Vec<Rect>,
 }
 
-/// Thickness of a widget on a side bar.
-const WIDGET_THICK: f32 = 28.0;
+/// How the widgets on a side bar are laid out: icon and label side by side, the label under the
+/// icon, or the icon alone. The first that fits all of them in one row is used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidgetTier {
+    SideBySide,
+    Stacked,
+    GlyphOnly,
+}
+
+/// The widgets' layout: the tier, each one's length along the bar (pixels at 100% scale) and the
+/// thickness of a cell on a side bar.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WidgetPlan {
+    pub tier: WidgetTier,
+    pub lengths: Vec<f32>,
+    pub thick: f32,
+}
+
+/// Picks the tier from each widget's `[side by side, stacked, icon only]` lengths. Top and bottom
+/// bars have the room for side by side.
+pub fn plan_widgets(edge: Edge, width: f32, scale: f32, sizes: &[[f32; 3]]) -> WidgetPlan {
+    let pick = |i: usize| sizes.iter().map(|s| s[i]).collect::<Vec<f32>>();
+    if edge.is_horizontal() || sizes.is_empty() {
+        return WidgetPlan {
+            tier: WidgetTier::SideBySide,
+            lengths: pick(0),
+            thick: SIDE_THICK,
+        };
+    }
+    let room = (width - 2.0 * PAD * scale).max(0.0);
+    let fits = |lengths: &[f32]| {
+        let total: f32 = lengths.iter().map(|len| len * scale).sum::<f32>()
+            + GAP * scale * (lengths.len() as f32 - 1.0);
+        total <= room
+    };
+    for (tier, index, thick) in [
+        (WidgetTier::SideBySide, 0, SIDE_THICK),
+        (WidgetTier::Stacked, 1, STACKED_THICK),
+    ] {
+        let lengths = pick(index);
+        if fits(&lengths) {
+            return WidgetPlan {
+                tier,
+                lengths,
+                thick,
+            };
+        }
+    }
+    WidgetPlan {
+        tier: WidgetTier::GlyphOnly,
+        lengths: pick(2),
+        thick: SIDE_THICK,
+    }
+}
 
 /// Lays out `buttons` rows and `tray` icon cells. The cells sit at the end of the bar before the
 /// clock: one row on top and bottom bars, a grid on side bars. Cells that do not fit are left out.
@@ -220,10 +273,8 @@ pub fn bar_layout(
     )
 }
 
-/// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar;
-/// on side bars they wrap onto further rows when one row is too narrow, and only a widget wider
-/// than the bar alone is shrunk). They sit just before the tray cells, in order, and their rects
-/// follow the tray cells in `tray`.
+/// Like `bar_layout`, with bar widgets of the given lengths (pixels at 100% scale, along the bar),
+/// laid out side by side.
 #[allow(clippy::too_many_arguments)]
 pub fn bar_layout_with_widgets(
     edge: Edge,
@@ -236,6 +287,41 @@ pub fn bar_layout_with_widgets(
     widgets: &[f32],
     clock_extent: f32,
 ) -> BarLayout {
+    let plan = WidgetPlan {
+        tier: WidgetTier::SideBySide,
+        lengths: widgets.to_vec(),
+        thick: SIDE_THICK,
+    };
+    bar_layout_with_plan(
+        edge,
+        width,
+        height,
+        scale,
+        buttons,
+        start_size,
+        tray,
+        &plan,
+        clock_extent,
+    )
+}
+
+/// Like `bar_layout`, with the bar widgets laid out as `plan` says. On side bars they wrap onto
+/// further rows when one row is too narrow, only a widget wider than the bar alone is shrunk, and
+/// each row is stretched to the full width. They sit just before the tray cells, in order, and
+/// their rects follow the tray cells in `tray`.
+#[allow(clippy::too_many_arguments)]
+pub fn bar_layout_with_plan(
+    edge: Edge,
+    width: f32,
+    height: f32,
+    scale: f32,
+    buttons: usize,
+    start_size: Option<f32>,
+    tray: usize,
+    plan: &WidgetPlan,
+    clock_extent: f32,
+) -> BarLayout {
+    let widgets = plan.lengths.as_slice();
     let (mut cells, extent) = tray_cells(edge, width, height, scale, tray, clock_extent);
     let clock = clock_rect_sized(edge, width, height, scale, clock_extent);
     let pad = PAD * scale;
@@ -261,7 +347,7 @@ pub fn bar_layout_with_widgets(
             }
             reserved += total + pad;
         } else {
-            let each = WIDGET_THICK * scale;
+            let each = plan.thick * scale;
             let room = (width - 2.0 * pad).max(0.0);
             let mut rows: Vec<Vec<f32>> = Vec::new();
             let mut used = 0.0;
@@ -283,15 +369,18 @@ pub fn bar_layout_with_widgets(
             let first_top = (clock.top - extent - pad - block).max(0.0);
             for (i, row) in rows.iter().enumerate() {
                 let top = first_top + i as f32 * (each + gap);
+                let used: f32 = row.iter().sum::<f32>() + gap * (row.len() as f32 - 1.0);
+                let extra = (room - used).max(0.0) / row.len() as f32;
                 let mut left = pad;
                 for length in row {
+                    let right = left + length + extra;
                     cells.push(Rect {
                         left,
                         top,
-                        right: left + length,
+                        right,
                         bottom: top + each,
                     });
-                    left += length + gap;
+                    left = right + gap;
                 }
             }
             reserved += block + pad;
@@ -596,14 +685,67 @@ mod tests {
         );
         let row = &layout.tray[3..];
         for (cell, length) in row.iter().zip(lengths) {
-            assert_eq!(cell.right - cell.left, length);
-            assert!(cell.right <= 168.0);
+            assert!(cell.right - cell.left >= length);
+            assert!(cell.right <= 168.0 - 4.0 + 0.01);
         }
+        assert!((row[2].right - 164.0).abs() < 0.01);
+        assert!((row[3].right - 164.0).abs() < 0.01);
         assert_eq!(row[0].top, row[2].top);
         assert!(row[3].top > row[2].top);
         assert_eq!(row[3].left, row[0].left);
         assert!(row[3].bottom <= layout.tray[0].top);
         assert!(layout.rows[1].bottom <= row[0].top);
+    }
+
+    #[test]
+    fn widgets_go_stacked_when_side_by_side_does_not_fit_a_side_bar() {
+        // language, network, volume, battery on a 160 px bar, as measured: [side, stacked, icon only]
+        let sizes = [
+            [35.0, 35.0, 35.0],
+            [24.0, 24.0, 24.0],
+            [55.0, 34.0, 24.0],
+            [57.0, 34.0, 24.0],
+        ];
+        let plan = plan_widgets(Edge::Right, 160.0, 1.0, &sizes);
+        assert_eq!(plan.tier, WidgetTier::Stacked);
+        assert_eq!(plan.lengths, vec![35.0, 24.0, 34.0, 34.0]);
+        assert_eq!(plan.thick, STACKED_THICK);
+        let layout = bar_layout_with_plan(
+            Edge::Right,
+            160.0,
+            1080.0,
+            1.0,
+            2,
+            None,
+            3,
+            &plan,
+            default_clock_extent(Edge::Right),
+        );
+        let row = &layout.tray[3..];
+        assert!(row.iter().all(|r| r.top == row[0].top));
+        assert_eq!(row[0].bottom - row[0].top, STACKED_THICK);
+        assert!((row[3].right - 156.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn side_by_side_is_kept_when_it_fits_and_icons_only_when_nothing_else_does() {
+        let sizes = [[40.0, 30.0, 24.0], [40.0, 30.0, 24.0]];
+        assert_eq!(
+            plan_widgets(Edge::Right, 200.0, 1.0, &sizes).tier,
+            WidgetTier::SideBySide
+        );
+        assert_eq!(
+            plan_widgets(Edge::Right, 70.0, 1.0, &sizes).tier,
+            WidgetTier::Stacked
+        );
+        assert_eq!(
+            plan_widgets(Edge::Right, 50.0, 1.0, &sizes).tier,
+            WidgetTier::GlyphOnly
+        );
+        assert_eq!(
+            plan_widgets(Edge::Bottom, 50.0, 1.0, &sizes).tier,
+            WidgetTier::SideBySide
+        );
     }
 
     #[test]
