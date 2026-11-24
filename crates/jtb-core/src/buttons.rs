@@ -202,23 +202,24 @@ pub enum WidgetTier {
     GlyphOnly,
 }
 
-/// The smallest factor the widgets are scaled down to, icon and text together, before the layout
-/// falls back to stacking them.
-pub const MIN_SHRINK: f32 = 0.75;
+/// The smallest and largest factor the widgets are scaled to, icon and text together: down before
+/// the layout falls back to stacking them, up so that a roomy bar is not left with gaps.
+pub const MIN_FACTOR: f32 = 0.75;
+pub const MAX_FACTOR: f32 = 1.5;
 
 /// The widgets' layout: the tier, each one's length along the bar (pixels at 100% scale) and the
-/// thickness of a cell on a side bar, both already multiplied by `shrink`, the factor the icons
-/// and text are drawn at (1.0 unless a side bar is too narrow for them at full size).
+/// thickness of a cell on a side bar, both already multiplied by `factor`, the factor the icons
+/// and text are drawn at (1.0 on top and bottom bars and in the stacked and icon layouts).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetPlan {
     pub tier: WidgetTier,
     pub lengths: Vec<f32>,
     pub thick: f32,
-    pub shrink: f32,
+    pub factor: f32,
 }
 
-/// Picks the tier from each widget's `[side by side, stacked, icon only]` lengths: side by side at
-/// full size, else side by side scaled down to at most `MIN_SHRINK`, else stacked, else icons only.
+/// Picks the tier from each widget's `[side by side, stacked, icon only]` lengths: side by side
+/// scaled to fill the bar (between `MIN_FACTOR` and `MAX_FACTOR`), else stacked, else icons only.
 /// Top and bottom bars have the room for side by side.
 pub fn plan_widgets(edge: Edge, width: f32, scale: f32, sizes: &[[f32; 3]]) -> WidgetPlan {
     let pick = |i: usize| sizes.iter().map(|s| s[i]).collect::<Vec<f32>>();
@@ -227,28 +228,21 @@ pub fn plan_widgets(edge: Edge, width: f32, scale: f32, sizes: &[[f32; 3]]) -> W
             tier: WidgetTier::SideBySide,
             lengths: pick(0),
             thick: SIDE_THICK,
-            shrink: 1.0,
+            factor: 1.0,
         };
     }
     let room = (width - 2.0 * PAD * scale).max(0.0);
     let gaps = |lengths: &[f32]| GAP * scale * (lengths.len() as f32 - 1.0);
     let total = |lengths: &[f32]| lengths.iter().map(|len| len * scale).sum::<f32>();
     let side = pick(0);
-    if total(&side) + gaps(&side) <= room {
-        return WidgetPlan {
-            tier: WidgetTier::SideBySide,
-            lengths: side,
-            thick: SIDE_THICK,
-            shrink: 1.0,
-        };
-    }
     let fit = ((room - gaps(&side)) / total(&side) * 100.0).floor() / 100.0;
-    if fit >= MIN_SHRINK {
+    if fit >= MIN_FACTOR {
+        let factor = fit.min(MAX_FACTOR);
         return WidgetPlan {
             tier: WidgetTier::SideBySide,
-            lengths: side.iter().map(|len| len * fit).collect(),
-            thick: SIDE_THICK * fit,
-            shrink: fit,
+            lengths: side.iter().map(|len| len * factor).collect(),
+            thick: SIDE_THICK * factor,
+            factor,
         };
     }
     let stacked = pick(1);
@@ -257,14 +251,14 @@ pub fn plan_widgets(edge: Edge, width: f32, scale: f32, sizes: &[[f32; 3]]) -> W
             tier: WidgetTier::Stacked,
             lengths: stacked,
             thick: STACKED_THICK,
-            shrink: 1.0,
+            factor: 1.0,
         };
     }
     WidgetPlan {
         tier: WidgetTier::GlyphOnly,
         lengths: pick(2),
         thick: SIDE_THICK,
-        shrink: 1.0,
+        factor: 1.0,
     }
 }
 
@@ -311,7 +305,7 @@ pub fn bar_layout_with_widgets(
         tier: WidgetTier::SideBySide,
         lengths: widgets.to_vec(),
         thick: SIDE_THICK,
-        shrink: 1.0,
+        factor: 1.0,
     };
     bar_layout_with_plan(
         edge,
@@ -729,8 +723,8 @@ mod tests {
         ];
         let plan = plan_widgets(Edge::Right, 160.0, 1.0, &sizes);
         assert_eq!(plan.tier, WidgetTier::SideBySide);
-        assert!(plan.shrink >= MIN_SHRINK && plan.shrink < 1.0);
-        assert_eq!(plan.thick, SIDE_THICK * plan.shrink);
+        assert!(plan.factor >= MIN_FACTOR && plan.factor < 1.0);
+        assert_eq!(plan.thick, SIDE_THICK * plan.factor);
         let layout = bar_layout_with_plan(
             Edge::Right,
             160.0,
@@ -760,7 +754,7 @@ mod tests {
         assert_eq!(plan.tier, WidgetTier::Stacked);
         assert_eq!(plan.lengths, vec![40.0; 4]);
         assert_eq!(plan.thick, STACKED_THICK);
-        assert_eq!(plan.shrink, 1.0);
+        assert_eq!(plan.factor, 1.0);
         let layout = bar_layout_with_plan(
             Edge::Right,
             190.0,
@@ -782,15 +776,15 @@ mod tests {
         let sizes = [[50.0, 30.0, 24.0], [50.0, 30.0, 24.0]];
         let plan = |width| plan_widgets(Edge::Right, width, 1.0, &sizes);
         assert_eq!(plan(200.0).tier, WidgetTier::SideBySide);
-        assert_eq!(plan(200.0).shrink, 1.0);
+        assert_eq!(plan(200.0).factor, MAX_FACTOR);
+        assert!((plan(120.0).factor - 1.10).abs() < 0.001);
         assert_eq!(plan(100.0).tier, WidgetTier::SideBySide);
-        assert!((plan(100.0).shrink - 0.9).abs() < 0.001);
+        assert!((plan(100.0).factor - 0.9).abs() < 0.001);
         assert_eq!(plan(70.0).tier, WidgetTier::Stacked);
         assert_eq!(plan(50.0).tier, WidgetTier::GlyphOnly);
-        assert_eq!(
-            plan_widgets(Edge::Bottom, 50.0, 1.0, &sizes).tier,
-            WidgetTier::SideBySide
-        );
+        let bottom = plan_widgets(Edge::Bottom, 50.0, 1.0, &sizes);
+        assert_eq!(bottom.tier, WidgetTier::SideBySide);
+        assert_eq!(bottom.factor, 1.0);
     }
 
     #[test]

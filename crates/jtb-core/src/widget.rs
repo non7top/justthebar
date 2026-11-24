@@ -22,18 +22,18 @@ impl WidgetState {
         self.icon.is_some() || !self.symbol.is_empty()
     }
 
-    /// Size of the icon on the bar in pixels at 100% scale; the battery has no label and is larger.
+    /// Size of the icon on the bar in pixels at 100% scale; the drawn icons are larger than glyphs.
     pub fn icon_size(&self) -> f32 {
         match self.icon {
-            Some(WidgetIcon::Battery { .. }) => BATTERY_ICON,
-            _ => ICON,
+            Some(_) => DRAWN_ICON,
+            None => ICON,
         }
     }
 }
 
 /// Size of an icon on the bar, in pixels at 100% scale.
 pub const ICON: f32 = 20.0;
-const BATTERY_ICON: f32 = 26.0;
+const DRAWN_ICON: f32 = 26.0;
 /// Space around a widget's content, and between its icon and label.
 pub const PAD: f32 = 2.0;
 pub const GAP: f32 = 3.0;
@@ -99,8 +99,7 @@ pub enum Power {
     Plugged,
 }
 
-/// The battery icon for `percent` (0 to 100) and the power source. The fill shows the level, so
-/// the bar has no label; the tooltip has the percentage.
+/// The battery icon for `percent` (0 to 100) and the power source, with the percentage.
 pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     let note = match power {
         Power::Battery => "",
@@ -110,7 +109,7 @@ pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     WidgetState {
         icon: Some(WidgetIcon::Battery { percent, power }),
         symbol: String::new(),
-        label: String::new(),
+        label: format!("{percent}%"),
         tooltip: format!("Battery: {percent}%{note}"),
         tint: None,
     }
@@ -157,6 +156,20 @@ pub enum Network {
     Offline,
 }
 
+/// Signal quality in percent from an RSSI in dBm, linear from -100 dBm (0%) to -50 dBm (100%) as
+/// Windows defines its own quality value.
+pub fn quality_from_rssi(dbm: i32) -> u8 {
+    ((dbm + 100) * 2).clamp(0, 100) as u8
+}
+
+/// The Wi-Fi tooltip; the network name is left out when it is not known.
+pub fn wifi_tooltip(name: Option<&str>, quality: u8) -> String {
+    match name.filter(|n| !n.is_empty()) {
+        Some(name) => format!("Wi-Fi: {name}, signal {quality}%"),
+        None => format!("Wi-Fi: signal {quality}%"),
+    }
+}
+
 /// The network glyph: signal bars for Wi-Fi, a plug for a cable, a red crossed globe when offline.
 pub fn network_state(network: &Network) -> WidgetState {
     let mut tint = None;
@@ -168,7 +181,7 @@ pub fn network_state(network: &Network) -> WidgetState {
                 50..=74 => 0xE874,
                 _ => 0xE701,
             };
-            (code, format!("Wi-Fi: {name}, signal {quality}%"))
+            (code, wifi_tooltip(Some(name), *quality))
         }
         Network::Ethernet => (0xE839, "Network: wired".to_string()),
         Network::Offline => {
@@ -229,7 +242,7 @@ mod tests {
             "Battery: 100%, plugged in"
         );
         assert_eq!(battery_state(80, Power::Battery).tooltip, "Battery: 80%");
-        assert_eq!(battery_state(80, Power::Battery).label, "");
+        assert_eq!(battery_state(80, Power::Battery).label, "80%");
     }
 
     #[test]
@@ -265,6 +278,22 @@ mod tests {
     }
 
     #[test]
+    fn rssi_maps_linearly_to_quality() {
+        assert_eq!(quality_from_rssi(-100), 0);
+        assert_eq!(quality_from_rssi(-75), 50);
+        assert_eq!(quality_from_rssi(-50), 100);
+        assert_eq!(quality_from_rssi(-30), 100);
+        assert_eq!(quality_from_rssi(-120), 0);
+    }
+
+    #[test]
+    fn the_wifi_tooltip_leaves_out_an_unknown_name() {
+        assert_eq!(wifi_tooltip(Some("home"), 60), "Wi-Fi: home, signal 60%");
+        assert_eq!(wifi_tooltip(None, 60), "Wi-Fi: signal 60%");
+        assert_eq!(wifi_tooltip(Some(""), 60), "Wi-Fi: signal 60%");
+    }
+
+    #[test]
     fn language_is_two_capital_letters() {
         let state = language_state("en");
         assert_eq!(state.label, "EN");
@@ -281,9 +310,9 @@ mod tests {
             ..volume_state(80, false)
         };
         let labeled = sizes(&state, 26.0);
-        assert_eq!(labeled.side, 2.0 + 20.0 + 3.0 + 28.0 + 2.0);
+        assert_eq!(labeled.side, 2.0 + 26.0 + 3.0 + 28.0 + 2.0);
         assert_eq!(labeled.stacked, 2.0 + 28.0 + 2.0);
-        assert_eq!(labeled.compact, 24.0);
+        assert_eq!(labeled.compact, 2.0 + 26.0 + 2.0);
         assert!(labeled.compact < labeled.stacked && labeled.stacked < labeled.side);
         let language = sizes(&language_state("en"), 20.0);
         assert_eq!(language.side, language.compact);
@@ -291,11 +320,12 @@ mod tests {
     }
 
     #[test]
-    fn the_battery_icon_is_larger_than_the_others() {
+    fn the_drawn_icons_are_larger_than_glyphs() {
         let battery = battery_state(80, Power::Battery);
         assert_eq!(battery.icon_size(), 26.0);
-        assert_eq!(volume_state(80, false).icon_size(), 20.0);
-        assert_eq!(sizes(&battery, 0.0).side, 30.0);
+        assert_eq!(volume_state(80, false).icon_size(), 26.0);
+        assert_eq!(language_state("en").icon_size(), 20.0);
+        assert_eq!(sizes(&battery, 26.0).side, 2.0 + 26.0 + 3.0 + 28.0 + 2.0);
     }
 
     #[test]

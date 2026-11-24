@@ -35,6 +35,11 @@ pub trait Widget {
     fn quick(&self) -> bool {
         false
     }
+    /// A tooltip read when it is shown, for what is too costly or gated to read on every poll; none
+    /// uses the one in the state.
+    fn tooltip(&mut self) -> Option<String> {
+        None
+    }
     /// A left click on the widget.
     fn click(&mut self) -> Option<Action> {
         None
@@ -111,6 +116,8 @@ impl Widget for Volume {
 #[derive(Default)]
 struct Network {
     was_offline: bool,
+    /// The signal of the Wi-Fi connection at the last poll; none when not on Wi-Fi.
+    quality: Option<u8>,
 }
 
 impl Widget for Network {
@@ -129,7 +136,19 @@ impl Widget for Network {
             ));
         }
         self.was_offline = offline;
+        self.quality = match network {
+            widget::Network::Wifi { quality, .. } => Some(quality),
+            _ => None,
+        };
         Some(state)
+    }
+
+    fn tooltip(&mut self) -> Option<String> {
+        let quality = self.quality?;
+        Some(widget::wifi_tooltip(
+            system::wifi_name().as_deref(),
+            quality,
+        ))
     }
 
     fn click(&mut self) -> Option<Action> {
@@ -318,8 +337,9 @@ pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
 /// The tooltip of the `at`th shown widget (tray ones first, then bar ones).
 pub fn tooltip(at: usize) -> Option<String> {
     CELLS.with_borrow_mut(|cells| {
-        nth_shown(cells, at)
-            .and_then(|cell| cell.shown.as_ref().map(|shown| shown.state.tooltip.clone()))
+        let cell = nth_shown(cells, at)?;
+        let shown = cell.shown.as_ref()?.state.tooltip.clone();
+        Some(cell.widget.tooltip().unwrap_or(shown))
     })
 }
 

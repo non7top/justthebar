@@ -65,14 +65,17 @@ pub fn volume() -> Result<(u8, bool), String> {
 
 /// The current Wi-Fi connection, else a wired one, else offline.
 pub fn network() -> Network {
-    if let Some((name, quality)) = wifi() {
-        return Network::Wifi { name, quality };
+    if let Some(quality) = wifi_signal() {
+        return Network::Wifi {
+            name: String::new(),
+            quality,
+        };
     }
     let adapters = adapters();
     let online = |a: &&Adapter| a.up && a.gateway;
-    if let Some(a) = adapters.iter().filter(online).find(|a| a.kind == WIFI) {
+    if adapters.iter().filter(online).any(|a| a.kind == WIFI) {
         return Network::Wifi {
-            name: a.name.clone(),
+            name: String::new(),
             quality: 100,
         };
     }
@@ -123,7 +126,61 @@ impl Adapter {
     }
 }
 
-fn wifi() -> Option<(String, u8)> {
+/// The signal quality in percent of a connected Wi-Fi interface. It leaves the network name out:
+/// Windows gates reading it behind the location permission and prompts for it when it is off, so
+/// the name is read only when a tooltip asks (`wifi_name`), not on every poll.
+fn wifi_signal() -> Option<u8> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::NetworkManagement::WiFi::{
+        wlan_interface_state_connected, wlan_intf_opcode_rssi, WlanCloseHandle, WlanEnumInterfaces,
+        WlanFreeMemory, WlanOpenHandle, WlanQueryInterface, WLAN_INTERFACE_INFO_LIST,
+    };
+    unsafe {
+        let mut version = 0;
+        let mut client = HANDLE::default();
+        if WlanOpenHandle(2, None, &mut version, &mut client) != 0 {
+            return None;
+        }
+        let mut found = None;
+        let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+        if WlanEnumInterfaces(client, None, &mut list) == 0 && !list.is_null() {
+            let interfaces = std::slice::from_raw_parts(
+                (*list).InterfaceInfo.as_ptr(),
+                (*list).dwNumberOfItems as usize,
+            );
+            if let Some(interface) = interfaces
+                .iter()
+                .find(|i| i.isState == wlan_interface_state_connected)
+            {
+                let mut size = 0;
+                let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+                let status = WlanQueryInterface(
+                    client,
+                    &interface.InterfaceGuid,
+                    wlan_intf_opcode_rssi,
+                    None,
+                    &mut size,
+                    &mut data,
+                    None,
+                );
+                let quality = if status == 0 && !data.is_null() {
+                    let rssi = *(data as *const i32);
+                    WlanFreeMemory(data);
+                    jtb_core::widget::quality_from_rssi(rssi)
+                } else {
+                    100
+                };
+                found = Some(quality);
+            }
+            WlanFreeMemory(list as *const _);
+        }
+        let _ = WlanCloseHandle(client, None);
+        found
+    }
+}
+
+/// The name of the connected Wi-Fi network; none when there is none or Windows denies it.
+pub fn wifi_name() -> Option<String> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::NetworkManagement::WiFi::{
         wlan_interface_state_connected, wlan_intf_opcode_current_connection, WlanCloseHandle,
@@ -163,8 +220,7 @@ fn wifi() -> Option<(String, u8)> {
                             &ssid.ucSSID[..(ssid.uSSIDLength as usize).min(ssid.ucSSID.len())],
                         )
                         .into_owned();
-                        let quality = attributes.wlanAssociationAttributes.wlanSignalQuality;
-                        found = Some((name, quality.min(100) as u8));
+                        found = Some(name);
                     }
                     WlanFreeMemory(data);
                 }

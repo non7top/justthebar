@@ -18,7 +18,7 @@ const RED: Color = [0.97, 0.13, 0.20];
 pub enum WidgetIcon {
     /// A vertical battery filled to `percent`; the bolt shows the power cable is connected.
     Battery { percent: u8, power: Power },
-    /// A speaker with up to three waves; a cross instead of waves when muted.
+    /// Three bars lit by level, left to right; all dim with a slash when muted.
     Volume { level: u8, muted: bool },
 }
 
@@ -85,27 +85,65 @@ fn battery(canvas: &mut Canvas, percent: u8, power: Power) {
 }
 
 const DIM: f32 = 0.28;
-const WAVE_CENTER: (f32, f32) = (14.5, 16.0);
-const WAVES: [(f32, f32); 3] = [(4.5, 6.5), (8.5, 10.5), (12.5, 14.5)];
 
+// The three bars of "Volume Level Indicator" from SVG Repo (CC0), a 47 x 47 drawing.
+const BAR_LOW: [(f32, f32); 7] = [
+    (1.215, 33.459),
+    (10.494, 28.156),
+    (14.1, 30.247),
+    (14.1, 35.551),
+    (11.69, 37.961),
+    (2.41, 37.961),
+    (0.081, 36.169),
+];
+const BAR_MID: [(f32, f32); 8] = [
+    (16.512, 26.115),
+    (17.726, 24.023),
+    (26.884, 18.79),
+    (30.49, 20.883),
+    (30.49, 35.551),
+    (28.08, 37.961),
+    (18.922, 37.961),
+    (16.512, 35.551),
+];
+const BAR_HIGH: [(f32, f32); 8] = [
+    (32.9, 16.752),
+    (34.115, 14.659),
+    (43.394, 9.357),
+    (47.0, 11.449),
+    (47.0, 35.551),
+    (44.589, 37.961),
+    (35.31, 37.961),
+    (32.9, 35.551),
+];
+
+/// A point of the 47 x 47 drawing on the grid, the bars centered.
+fn on_grid(points: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let scale = GRID / 47.0;
+    points
+        .iter()
+        .map(|(x, y)| (x * scale, (y - 23.66) * scale + GRID / 2.0))
+        .collect()
+}
+
+/// Three bars, lit from the left by level: red, green, orange. Muted shows them all dim with a
+/// red slash.
 fn volume(canvas: &mut Canvas, level: u8, muted: bool) {
-    let body = [
-        (4.0, 12.5),
-        (9.0, 12.5),
-        (15.0, 7.5),
-        (15.0, 24.5),
-        (9.0, 19.5),
-        (4.0, 19.5),
+    let bars = [
+        (&BAR_LOW[..], RED),
+        (&BAR_MID[..], GREEN),
+        (&BAR_HIGH[..], ORANGE),
     ];
-    canvas.paint(WHITE, 0.95, &polygon(&body));
-    if muted {
-        canvas.paint(WHITE, 0.95, &segment((19.0, 12.5), (27.0, 20.5), 1.1));
-        canvas.paint(WHITE, 0.95, &segment((27.0, 12.5), (19.0, 20.5), 1.1));
-        return;
+    for (i, (points, color)) in bars.iter().enumerate() {
+        let shape = on_grid(points);
+        if i < usize::from(level) && !muted {
+            canvas.paint(*color, 1.0, &polygon(&shape));
+        } else {
+            canvas.paint(WHITE, DIM, &polygon(&shape));
+        }
     }
-    for (i, (inner, outer)) in WAVES.iter().enumerate() {
-        let alpha = if i < usize::from(level) { 0.95 } else { DIM };
-        canvas.paint(WHITE, alpha, &arc(WAVE_CENTER, *inner, *outer, 50.0, 130.0));
+    if muted {
+        canvas.paint(RED, 0.95, &segment((4.0, 8.0), (28.0, 27.0), 1.3));
     }
 }
 
@@ -179,22 +217,6 @@ fn rrect(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> impl Fn(f32, f32) -> boo
         let cx = x.clamp(x0 + r, x1 - r);
         let cy = y.clamp(y0 + r, y1 - r);
         (x - cx).hypot(y - cy) <= r
-    }
-}
-
-/// A ring segment; angles are degrees clockwise from straight up.
-fn arc(
-    center: (f32, f32),
-    inner: f32,
-    outer: f32,
-    from: f32,
-    to: f32,
-) -> impl Fn(f32, f32) -> bool {
-    move |x, y| {
-        let (dx, dy) = (x - center.0, y - center.1);
-        let radius = dx.hypot(dy);
-        let angle = dx.atan2(-dy).to_degrees();
-        radius >= inner && radius <= outer && angle >= from && angle <= to
     }
 }
 
@@ -287,21 +309,34 @@ mod tests {
         render(&WidgetIcon::Volume { level, muted })
     }
 
+    // The middle of each bar on the grid.
+    const LOW_BAR: (f32, f32) = (4.8, 22.7);
+    const MID_BAR: (f32, f32) = (16.0, 21.0);
+    const HIGH_BAR: (f32, f32) = (27.2, 16.5);
+
     #[test]
-    fn volume_waves_light_up_by_level_and_the_rest_are_dim() {
-        let wave = |level, radius: f32| alpha_at(&volume_pixels(level, false), 14.5 + radius, 16.0);
-        assert_eq!(wave(1, 5.5), 242);
-        assert!(wave(1, 9.5) > 0 && wave(1, 9.5) < 100);
-        assert_eq!(wave(2, 9.5), 242);
-        assert_eq!(wave(3, 13.5), 242);
+    fn the_volume_bars_light_up_from_the_left_in_red_green_and_orange() {
+        let at = |level, bar: (f32, f32)| rgb_at(&volume_pixels(level, false), bar.0, bar.1);
+        assert_eq!(at(1, LOW_BAR), [247, 33, 51]);
+        assert_eq!(at(2, MID_BAR), [59, 224, 84]);
+        assert_eq!(at(3, HIGH_BAR), [255, 107, 43]);
     }
 
     #[test]
-    fn a_muted_speaker_has_a_cross_and_no_waves() {
-        let pixels = volume_pixels(0, true);
-        assert!(alpha_at(&pixels, 23.0, 16.5) > 200);
-        assert_eq!(alpha_at(&pixels, 14.5 + 9.5, 12.0), 0);
-        assert!(alpha_at(&pixels, 6.0, 16.0) > 200);
+    fn the_unlit_volume_bars_are_dim() {
+        let alpha = |level, bar: (f32, f32)| alpha_at(&volume_pixels(level, false), bar.0, bar.1);
+        assert_eq!(alpha(1, LOW_BAR), 255);
+        assert!(alpha(1, MID_BAR) > 0 && alpha(1, MID_BAR) < 100);
+        assert!(alpha(2, HIGH_BAR) > 0 && alpha(2, HIGH_BAR) < 100);
+        assert!(alpha(0, LOW_BAR) > 0 && alpha(0, LOW_BAR) < 100);
+    }
+
+    #[test]
+    fn a_muted_volume_has_dim_bars_and_a_red_slash() {
+        let pixels = volume_pixels(3, true);
+        assert!(alpha_at(&pixels, LOW_BAR.0, LOW_BAR.1) < 100);
+        assert!(alpha_at(&pixels, HIGH_BAR.0, HIGH_BAR.1) < 100);
+        assert!(alpha_at(&pixels, 16.0, 17.5) > 200);
     }
 
     #[test]

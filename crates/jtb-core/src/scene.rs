@@ -306,8 +306,8 @@ pub fn build_scene_with_widgets(
             });
         }
         let has_label = !view.label.is_empty();
-        let shrink = plan.shrink;
-        let pad = widget::PAD * scale * shrink;
+        let factor = plan.factor;
+        let pad = widget::PAD * scale * factor;
         let Some(symbol) = &view.symbol else {
             if has_label {
                 let mut rect = *cell;
@@ -321,18 +321,18 @@ pub fn build_scene_with_widgets(
                     text: view.label.clone(),
                     color: white,
                     align: Align::Center,
-                    font_scale: shrink,
+                    font_scale: factor,
                 });
             }
             continue;
         };
-        let size = view.icon_size * scale * shrink;
+        let size = view.icon_size * scale * factor;
         let middle = (cell.top + cell.bottom - size) / 2.0;
         let centered = (cell.left + cell.right - size) / 2.0;
         let (left, top) = match plan.tier {
             WidgetTier::SideBySide if has_label => {
                 // A cell stretched past the widget's own length centers its content.
-                let spare = (cell.right - cell.left - view.sizes.side * scale * shrink).max(0.0);
+                let spare = (cell.right - cell.left - view.sizes.side * scale * factor).max(0.0);
                 (cell.left + pad + spare / 2.0, middle)
             }
             WidgetTier::Stacked => (centered, cell.top + pad),
@@ -354,13 +354,13 @@ pub fn build_scene_with_widgets(
         match plan.tier {
             WidgetTier::SideBySide => labels.push(Label {
                 rect: Rect {
-                    left: left + size + widget::GAP * scale * shrink,
+                    left: left + size + widget::GAP * scale * factor,
                     ..*cell
                 },
                 text: view.label.clone(),
                 color: white,
                 align: Align::Left,
-                font_scale: shrink,
+                font_scale: factor,
             }),
             WidgetTier::Stacked => labels.push(Label {
                 rect: Rect {
