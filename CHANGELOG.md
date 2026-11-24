@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0](https://github.com/non7top/justthebar/compare/v0.2.0...v0.3.0) (2026-11-24)
+
+
+### Features
+
+* **app:** --version flag, and version and provenance claim in the exe and hook DLL resources ([0342c1d](https://github.com/non7top/justthebar/commit/0342c1d90644549190331430141bcf51c42e7ad0))
+* **installer:** per-user installer, --version and a signed release with Sigstore attestations ([0a3d9b6](https://github.com/non7top/justthebar/commit/0a3d9b6a542c9e58c020b648a0dd63756b3c2c05))
+* **installer:** per-user NSIS installer that quits the running bar, replaces the files and offers a restart ([621228e](https://github.com/non7top/justthebar/commit/621228e8189fef2ec663bca72234e6d1f2e5980a))
+
 ## [0.2.0](https://github.com/non7top/justthebar/compare/v0.1.0...v0.2.0) (2026-11-24)
 
 
