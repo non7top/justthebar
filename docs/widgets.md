@@ -15,7 +15,7 @@ left of the clock). A change applies while the bar runs. An unknown name is skip
 
 | Name | Shows | Click |
 |---|---|---|
-| `battery` | a vertical battery drawn by the bar, larger than the other icons and filled to the level, with the percentage: green from 50%, yellow from 25%, orange above 15%, red at 15% or less; green with a bolt while the power cable is connected (charging, or plugged in and full); hidden on a machine without a battery | opens the Windows quick settings |
+| `battery` | a fat battery lying on its side, drawn by the bar as tall as the row and filled from the left to the level, with the number on it (the percent sign is in the tooltip): green from 50%, yellow from 25%, orange above 15%, red at 15% or less; green with a bolt while the power cable is connected (charging, or plugged in and full); hidden on a machine without a battery | opens the Windows quick settings |
 | `language` | the two letter code of the input language of the foreground window, such as `EN` (three letters for a language that has no two letter code) | opens a menu of the installed keyboard layouts; the choice is applied to the window that had the focus |
 | `network` | Wi-Fi signal bars, a plug for a cable, a globe when offline | opens the Windows quick settings |
 | `volume` | three bars drawn by the bar, lit from the left by the level in red, green and orange, or all dim with a red slash when muted or at 0% (the percentage is in the tooltip) | opens the Windows quick settings |
@@ -36,7 +36,7 @@ to a second one.
 A widget implements `Widget` in `crates/jtb-app/src/widgets.rs`: a name, `state()` (the glyph or text
 and tooltip, or none to hide) and `click()`. What each one shows is plain data in
 `crates/jtb-core/src/widget.rs` (tested); reading the system is in `crates/jtb-win/src/system.rs`.
-The battery and the speaker are drawn from shapes on one grid (`crates/jtb-core/src/widgeticon.rs`, tested), the
+The battery and the volume bars are drawn from shapes on one grid (`crates/jtb-core/src/widgeticon.rs`, tested), the
 other symbols are glyphs drawn into a bitmap with GDI (`glyph.rs`, Segoe MDL2 Assets). State is
 read once a second, the language every 100 ms, and the bitmap is redrawn only when the state changed.
 

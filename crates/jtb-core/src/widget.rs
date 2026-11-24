@@ -22,12 +22,22 @@ impl WidgetState {
         self.icon.is_some() || !self.symbol.is_empty()
     }
 
-    /// Size of the icon on the bar in pixels at 100% scale; the drawn icons are larger than glyphs.
+    /// Height of the icon on the bar in pixels at 100% scale; the drawn icons are larger than glyphs.
     pub fn icon_size(&self) -> f32 {
         match self.icon {
             Some(_) => DRAWN_ICON,
             None => ICON,
         }
+    }
+
+    /// Width over height of the icon.
+    pub fn icon_aspect(&self) -> f32 {
+        self.icon.map_or(1.0, |icon| icon.aspect())
+    }
+
+    /// Whether the label is drawn on the icon, taking no room of its own.
+    pub fn label_on_icon(&self) -> bool {
+        matches!(self.icon, Some(WidgetIcon::Battery { .. }))
     }
 }
 
@@ -62,12 +72,12 @@ impl WidgetSizes {
 
 /// The lengths (pixels at 100% scale) of a widget whose label measures `label_width` pixels.
 pub fn sizes(state: &WidgetState, label_width: f32) -> WidgetSizes {
-    let text = if state.label.is_empty() {
+    let text = if state.label.is_empty() || state.label_on_icon() {
         0.0
     } else {
         label_width + SLACK
     };
-    let icon = state.icon_size();
+    let icon = state.icon_size() * state.icon_aspect();
     let floor = ICON + 2.0 * PAD;
     if !state.has_art() {
         let own = (text + 2.0 * PAD).max(floor);
@@ -99,7 +109,8 @@ pub enum Power {
     Plugged,
 }
 
-/// The battery icon for `percent` (0 to 100) and the power source, with the percentage.
+/// The battery icon for `percent` (0 to 100) and the power source. The number is drawn on the
+/// icon; the percent sign is left for the tooltip.
 pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     let note = match power {
         Power::Battery => "",
@@ -109,7 +120,7 @@ pub fn battery_state(percent: u8, power: Power) -> WidgetState {
     WidgetState {
         icon: Some(WidgetIcon::Battery { percent, power }),
         symbol: String::new(),
-        label: format!("{percent}%"),
+        label: percent.to_string(),
         tooltip: format!("Battery: {percent}%{note}"),
         tint: None,
     }
@@ -242,7 +253,7 @@ mod tests {
             "Battery: 100%, plugged in"
         );
         assert_eq!(battery_state(80, Power::Battery).tooltip, "Battery: 80%");
-        assert_eq!(battery_state(80, Power::Battery).label, "80%");
+        assert_eq!(battery_state(80, Power::Battery).label, "80");
     }
 
     #[test]
@@ -325,7 +336,13 @@ mod tests {
         assert_eq!(battery.icon_size(), 26.0);
         assert_eq!(volume_state(80, false).icon_size(), 26.0);
         assert_eq!(language_state("en").icon_size(), 20.0);
-        assert_eq!(sizes(&battery, 26.0).side, 2.0 + 26.0 + 3.0 + 28.0 + 2.0);
+        assert!(battery.label_on_icon());
+        assert!(!volume_state(80, false).label_on_icon());
+        assert_eq!(battery.icon_aspect(), 1.75);
+        let battery_sizes = sizes(&battery, 26.0);
+        assert_eq!(battery_sizes.side, 2.0 + 45.5 + 2.0);
+        assert_eq!(battery_sizes.stacked, battery_sizes.side);
+        assert_eq!(battery_sizes.compact, battery_sizes.side);
     }
 
     #[test]

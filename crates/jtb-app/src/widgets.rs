@@ -185,11 +185,11 @@ thread_local! {
     static CELLS: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
 }
 
-fn draw(font: &str, text: &str, em: u32, tint: [u8; 3]) -> Option<Arc<Icon>> {
+fn draw(font: &str, text: &str, em: u32, tint: [u8; 3], center_on: &str) -> Option<Arc<Icon>> {
     if text.is_empty() {
         return None;
     }
-    let bgra = glyph::render(font, text, BITMAP_SIZE, em, tint)?;
+    let bgra = glyph::render(font, text, BITMAP_SIZE, em, tint, center_on)?;
     Some(Arc::new(Icon {
         id: crate::next_icon_id(),
         width: BITMAP_SIZE,
@@ -198,19 +198,34 @@ fn draw(font: &str, text: &str, em: u32, tint: [u8; 3]) -> Option<Arc<Icon>> {
     }))
 }
 
+/// The glyph whose ink a symbol is centered on: the partial signal glyphs share the place of the
+/// full one, so that the bars grow in place.
+fn centering_glyph(symbol: &str) -> &str {
+    const PARTIAL_WIFI: [&str; 3] = ["\u{E872}", "\u{E873}", "\u{E874}"];
+    if PARTIAL_WIFI.contains(&symbol) {
+        "\u{E701}"
+    } else {
+        symbol
+    }
+}
+
 fn show(state: WidgetState) -> Shown {
     let symbol = match &state.icon {
-        Some(icon) => Some(Arc::new(Icon {
-            id: crate::next_icon_id(),
-            width: widgeticon::SIZE,
-            height: widgeticon::SIZE,
-            bgra: widgeticon::render(icon),
-        })),
+        Some(icon) => {
+            let bitmap = widgeticon::render(icon);
+            Some(Arc::new(Icon {
+                id: crate::next_icon_id(),
+                width: bitmap.width,
+                height: bitmap.height,
+                bgra: bitmap.bgra,
+            }))
+        }
         None => draw(
             SYMBOL_FONT,
             &state.symbol,
             BITMAP_SIZE,
             state.tint.unwrap_or(WHITE),
+            centering_glyph(&state.symbol),
         ),
     };
     let label_width = if state.label.is_empty() {
@@ -220,7 +235,13 @@ fn show(state: WidgetState) -> Shown {
     };
     Shown {
         symbol,
-        label: draw(TEXT_FONT, &state.label, BITMAP_SIZE * 3 / 4, WHITE),
+        label: draw(
+            TEXT_FONT,
+            &state.label,
+            BITMAP_SIZE * 3 / 4,
+            WHITE,
+            &state.label,
+        ),
         label_width,
         state,
     }
@@ -306,7 +327,9 @@ pub fn tray_icons() -> Vec<Arc<Icon>> {
         let mut icons = Vec::new();
         for cell in cells.iter().filter(|c| c.place == WidgetPlace::Tray) {
             if let Some(shown) = &cell.shown {
-                if let Some(icon) = shown.symbol.as_ref().or(shown.label.as_ref()) {
+                // The cell is square, so an icon of another shape gives way to the label.
+                let square = shown.symbol.as_ref().filter(|s| s.width == s.height);
+                if let Some(icon) = square.or(shown.label.as_ref()) {
                     icons.push(Arc::clone(icon));
                 }
             }
@@ -328,6 +351,8 @@ pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
                 label: shown.state.label.clone(),
                 sizes: widget::sizes(&shown.state, shown.label_width),
                 icon_size: shown.state.icon_size(),
+                icon_aspect: shown.state.icon_aspect(),
+                label_on_icon: shown.state.label_on_icon(),
                 hovered: hovered == Some(at),
             })
             .collect()

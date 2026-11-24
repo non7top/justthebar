@@ -10,6 +10,9 @@ use crate::icon::Icon;
 use crate::widget::{self, WidgetSizes};
 use crate::Edge;
 
+/// Font size of a label drawn on an icon, as a factor of the bar's.
+const OVERLAY_FONT: f32 = 0.8;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
     pub r: f32,
@@ -119,8 +122,11 @@ pub struct WidgetView {
     pub label: String,
     /// How long the widget is along the bar in each layout, in pixels at 100% scale.
     pub sizes: WidgetSizes,
-    /// Size of the icon in pixels at 100% scale.
+    /// Height of the icon in pixels at 100% scale, and its width over its height.
     pub icon_size: f32,
+    pub icon_aspect: f32,
+    /// The label goes on the icon, centered, instead of beside or under it.
+    pub label_on_icon: bool,
     pub hovered: bool,
 }
 
@@ -327,10 +333,11 @@ pub fn build_scene_with_widgets(
             continue;
         };
         let size = view.icon_size * scale * factor;
+        let icon_width = size * view.icon_aspect;
         let middle = (cell.top + cell.bottom - size) / 2.0;
-        let centered = (cell.left + cell.right - size) / 2.0;
+        let centered = (cell.left + cell.right - icon_width) / 2.0;
         let (left, top) = match plan.tier {
-            WidgetTier::SideBySide if has_label => {
+            WidgetTier::SideBySide if has_label && !view.label_on_icon => {
                 // A cell stretched past the widget's own length centers its content.
                 let spare = (cell.right - cell.left - view.sizes.side * scale * factor).max(0.0);
                 (cell.left + pad + spare / 2.0, middle)
@@ -342,13 +349,51 @@ pub fn build_scene_with_widgets(
             rect: Rect {
                 left,
                 top,
-                right: left + size,
+                right: left + icon_width,
                 bottom: top + size,
             },
             icon: Arc::clone(symbol),
             opacity: 1.0,
         });
         if !has_label {
+            continue;
+        }
+        if view.label_on_icon {
+            // Over the body of the icon; a dark outline keeps the digits readable on the fill.
+            let body = Rect {
+                left: left + icon_width * 0.02,
+                right: left + icon_width * 0.93,
+                top,
+                bottom: top + size,
+            };
+            let outline = Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.9,
+            };
+            let step = scale.max(1.0);
+            for (dx, dy) in [(-step, 0.0), (step, 0.0), (0.0, -step), (0.0, step)] {
+                labels.push(Label {
+                    rect: Rect {
+                        left: body.left + dx,
+                        right: body.right + dx,
+                        top: body.top + dy,
+                        bottom: body.bottom + dy,
+                    },
+                    text: view.label.clone(),
+                    color: outline,
+                    align: Align::Center,
+                    font_scale: OVERLAY_FONT * factor,
+                });
+            }
+            labels.push(Label {
+                rect: body,
+                text: view.label.clone(),
+                color: white,
+                align: Align::Center,
+                font_scale: OVERLAY_FONT * factor,
+            });
             continue;
         }
         match plan.tier {

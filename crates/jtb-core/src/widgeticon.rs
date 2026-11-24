@@ -1,10 +1,13 @@
-//! Icons the bar draws itself, from shapes on a 32 x 32 grid, so they line up with each other
+//! Icons the bar draws itself, from shapes on a grid 32 units high, so they line up with each other
 //! and with the bar's text; the stock symbol font places every glyph differently. Pure pixels.
 use crate::widget::Power;
 
-/// Width and height of the bitmaps; the renderer shrinks them to the icon size.
-pub const SIZE: u32 = 64;
+/// Pixels per grid unit; the renderer shrinks the bitmaps to the icon size.
+pub const SCALE: f32 = 2.0;
+/// Height of every icon in grid units.
 const GRID: f32 = 32.0;
+/// Width of the battery in grid units: a fat battery lying on its side.
+const BATTERY_WIDTH: f32 = 56.0;
 const SAMPLES: u32 = 3;
 
 type Color = [f32; 3];
@@ -16,20 +19,40 @@ const RED: Color = [0.97, 0.13, 0.20];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WidgetIcon {
-    /// A vertical battery filled to `percent`; the bolt shows the power cable is connected.
+    /// A battery on its side filled to `percent`; the bolt shows the power cable is connected.
     Battery { percent: u8, power: Power },
     /// Three bars lit by level, left to right; all dim with a slash when muted.
     Volume { level: u8, muted: bool },
 }
 
-/// Premultiplied BGRA pixels, `SIZE` x `SIZE`.
-pub fn render(icon: &WidgetIcon) -> Vec<u8> {
-    let mut canvas = Canvas::new();
+impl WidgetIcon {
+    /// Width over height of the icon.
+    pub fn aspect(&self) -> f32 {
+        match self {
+            WidgetIcon::Battery { .. } => BATTERY_WIDTH / GRID,
+            WidgetIcon::Volume { .. } => 1.0,
+        }
+    }
+}
+
+/// Premultiplied BGRA pixels.
+pub struct Bitmap {
+    pub width: u32,
+    pub height: u32,
+    pub bgra: Vec<u8>,
+}
+
+pub fn render(icon: &WidgetIcon) -> Bitmap {
+    let width = match icon {
+        WidgetIcon::Battery { .. } => BATTERY_WIDTH,
+        WidgetIcon::Volume { .. } => GRID,
+    };
+    let mut canvas = Canvas::new(width);
     match icon {
         WidgetIcon::Battery { percent, power } => battery(&mut canvas, *percent, *power),
         WidgetIcon::Volume { level, muted } => volume(&mut canvas, *level, *muted),
     }
-    canvas.into_bgra()
+    canvas.into_bitmap()
 }
 
 /// The fill color: green while the cable is connected, else by level.
@@ -46,39 +69,33 @@ pub fn battery_fill(percent: u8, power: Power) -> [u8; 3] {
     color.map(|c| (c * 255.0).round() as u8)
 }
 
-const FILL_LEFT: f32 = 11.5;
-const FILL_RIGHT: f32 = 20.5;
-const FILL_TOP: f32 = 9.0;
-const FILL_BOTTOM: f32 = 26.5;
+const FILL_LEFT: f32 = 4.7;
+const FILL_RIGHT: f32 = 48.8;
+const FILL_TOP: f32 = 5.7;
+const FILL_BOTTOM: f32 = 26.3;
 
 fn battery(canvas: &mut Canvas, percent: u8, power: Power) {
-    canvas.paint(WHITE, 0.95, &rrect(13.0, 2.5, 19.0, 7.0, 1.5));
-    canvas.paint(WHITE, 0.95, &rrect(8.0, 5.5, 24.0, 30.0, 4.0));
-    canvas.erase(&rrect(10.0, 7.5, 22.0, 28.0, 2.2));
+    canvas.paint(WHITE, 0.95, &rrect(52.0, 10.0, 55.5, 22.0, 1.5));
+    canvas.paint(WHITE, 0.95, &rrect(1.0, 2.0, 52.5, 30.0, 4.5));
+    canvas.erase(&rrect(3.2, 4.2, 50.3, 27.8, 2.5));
     let percent = percent.min(100);
     if percent > 0 {
-        let height = ((FILL_BOTTOM - FILL_TOP) * f32::from(percent) / 100.0).max(1.8);
+        let width = ((FILL_RIGHT - FILL_LEFT) * f32::from(percent) / 100.0).max(2.0);
         let [r, g, b] = battery_fill(percent, power).map(|c| f32::from(c) / 255.0);
         canvas.paint(
             [r, g, b],
             1.0,
-            &rrect(
-                FILL_LEFT,
-                FILL_BOTTOM - height,
-                FILL_RIGHT,
-                FILL_BOTTOM,
-                1.2,
-            ),
+            &rrect(FILL_LEFT, FILL_TOP, FILL_LEFT + width, FILL_BOTTOM, 1.6),
         );
     }
     if power != Power::Battery {
         let bolt = [
-            (18.6, 10.0),
-            (12.0, 19.0),
-            (15.4, 19.0),
-            (13.4, 26.0),
-            (20.0, 16.5),
-            (16.6, 16.5),
+            (9.6, 8.0),
+            (6.2, 16.0),
+            (8.2, 16.0),
+            (7.0, 24.0),
+            (11.0, 14.5),
+            (9.0, 14.5),
         ];
         canvas.paint(WHITE, 1.0, &polygon(&bolt));
     }
@@ -148,24 +165,29 @@ fn volume(canvas: &mut Canvas, level: u8, muted: bool) {
 }
 
 struct Canvas {
+    width: u32,
+    height: u32,
     /// Premultiplied RGBA.
     px: Vec<[f32; 4]>,
 }
 
 impl Canvas {
-    fn new() -> Canvas {
+    fn new(units: f32) -> Canvas {
+        let width = (units * SCALE) as u32;
+        let height = (GRID * SCALE) as u32;
         Canvas {
-            px: vec![[0.0; 4]; (SIZE * SIZE) as usize],
+            width,
+            height,
+            px: vec![[0.0; 4]; (width * height) as usize],
         }
     }
 
     fn coverage(x: u32, y: u32, inside: &dyn Fn(f32, f32) -> bool) -> f32 {
-        let scale = GRID / SIZE as f32;
         let mut hits = 0;
         for sy in 0..SAMPLES {
             for sx in 0..SAMPLES {
-                let gx = (x as f32 + (sx as f32 + 0.5) / SAMPLES as f32) * scale;
-                let gy = (y as f32 + (sy as f32 + 0.5) / SAMPLES as f32) * scale;
+                let gx = (x as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / SCALE;
+                let gy = (y as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / SCALE;
                 if inside(gx, gy) {
                     hits += 1;
                 }
@@ -175,11 +197,11 @@ impl Canvas {
     }
 
     fn paint(&mut self, color: Color, alpha: f32, inside: &dyn Fn(f32, f32) -> bool) {
-        for y in 0..SIZE {
-            for x in 0..SIZE {
+        for y in 0..self.height {
+            for x in 0..self.width {
                 let a = Self::coverage(x, y, inside) * alpha;
                 if a > 0.0 {
-                    let dst = &mut self.px[(y * SIZE + x) as usize];
+                    let dst = &mut self.px[(y * self.width + x) as usize];
                     for (d, c) in dst.iter_mut().zip([color[0], color[1], color[2], 1.0]) {
                         *d = c * a + *d * (1.0 - a);
                     }
@@ -189,22 +211,28 @@ impl Canvas {
     }
 
     fn erase(&mut self, inside: &dyn Fn(f32, f32) -> bool) {
-        for y in 0..SIZE {
-            for x in 0..SIZE {
+        for y in 0..self.height {
+            for x in 0..self.width {
                 let keep = 1.0 - Self::coverage(x, y, inside);
-                for d in &mut self.px[(y * SIZE + x) as usize] {
+                for d in &mut self.px[(y * self.width + x) as usize] {
                     *d *= keep;
                 }
             }
         }
     }
 
-    fn into_bgra(self) -> Vec<u8> {
+    fn into_bitmap(self) -> Bitmap {
         let byte = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-        self.px
+        let bgra = self
+            .px
             .iter()
             .flat_map(|p| [byte(p[2]), byte(p[1]), byte(p[0]), byte(p[3])])
-            .collect()
+            .collect();
+        Bitmap {
+            width: self.width,
+            height: self.height,
+            bgra,
+        }
     }
 }
 
@@ -248,39 +276,52 @@ fn polygon(points: &[(f32, f32)]) -> impl Fn(f32, f32) -> bool + '_ {
 mod tests {
     use super::*;
 
-    fn alpha_at(bgra: &[u8], gx: f32, gy: f32) -> u8 {
-        let x = (gx / GRID * SIZE as f32) as u32;
-        let y = (gy / GRID * SIZE as f32) as u32;
-        bgra[((y * SIZE + x) * 4 + 3) as usize]
+    fn alpha_at(bitmap: &Bitmap, gx: f32, gy: f32) -> u8 {
+        let x = (gx * SCALE) as u32;
+        let y = (gy * SCALE) as u32;
+        bitmap.bgra[((y * bitmap.width + x) * 4 + 3) as usize]
     }
 
-    fn rgb_at(bgra: &[u8], gx: f32, gy: f32) -> [u8; 3] {
-        let x = (gx / GRID * SIZE as f32) as u32;
-        let y = (gy / GRID * SIZE as f32) as u32;
-        let at = ((y * SIZE + x) * 4) as usize;
-        [bgra[at + 2], bgra[at + 1], bgra[at]]
+    fn rgb_at(bitmap: &Bitmap, gx: f32, gy: f32) -> [u8; 3] {
+        let x = (gx * SCALE) as u32;
+        let y = (gy * SCALE) as u32;
+        let at = ((y * bitmap.width + x) * 4) as usize;
+        [bitmap.bgra[at + 2], bitmap.bgra[at + 1], bitmap.bgra[at]]
     }
 
-    fn battery_pixels(percent: u8, power: Power) -> Vec<u8> {
+    fn battery_bitmap(percent: u8, power: Power) -> Bitmap {
         render(&WidgetIcon::Battery { percent, power })
     }
 
     #[test]
-    fn the_bitmap_has_the_declared_size() {
+    fn the_battery_lies_on_its_side_and_the_bars_are_square() {
+        let battery = battery_bitmap(50, Power::Battery);
+        assert_eq!((battery.width, battery.height), (112, 64));
+        assert_eq!(battery.bgra.len(), 112 * 64 * 4);
         assert_eq!(
-            battery_pixels(50, Power::Battery).len(),
-            (SIZE * SIZE * 4) as usize
+            WidgetIcon::Battery {
+                percent: 1,
+                power: Power::Battery
+            }
+            .aspect(),
+            1.75
         );
+        let volume = render(&WidgetIcon::Volume {
+            level: 1,
+            muted: false,
+        });
+        assert_eq!((volume.width, volume.height), (64, 64));
     }
 
     #[test]
-    fn the_fill_rises_with_the_level() {
-        let high = |p| alpha_at(&battery_pixels(p, Power::Battery), 16.0, 12.0);
-        assert_eq!(high(100), 255);
-        assert_eq!(high(50), 0);
-        let low = |p| alpha_at(&battery_pixels(p, Power::Battery), 16.0, 25.0);
-        assert_eq!(low(10), 255);
-        assert_eq!(low(0), 0);
+    fn the_fill_grows_to_the_right_with_the_level() {
+        let at = |p, x| alpha_at(&battery_bitmap(p, Power::Battery), x, 16.0);
+        assert_eq!(at(100, 45.0), 255);
+        assert_eq!(at(50, 45.0), 0);
+        assert_eq!(at(50, 15.0), 255);
+        assert_eq!(at(10, 8.0), 255);
+        assert_eq!(at(10, 20.0), 0);
+        assert_eq!(at(0, 8.0), 0);
     }
 
     #[test]
@@ -292,20 +333,29 @@ mod tests {
         assert_eq!(battery_fill(15, Power::Charging), [59, 224, 84]);
         assert_eq!(battery_fill(100, Power::Plugged), [59, 224, 84]);
         assert_eq!(
-            rgb_at(&battery_pixels(100, Power::Battery), 16.0, 24.0),
+            rgb_at(&battery_bitmap(100, Power::Battery), 30.0, 16.0),
             [59, 224, 84]
         );
     }
 
     #[test]
     fn the_bolt_shows_only_with_the_cable() {
-        let at_bolt = |power| rgb_at(&battery_pixels(100, power), 15.0, 21.0);
+        let at_bolt = |power| rgb_at(&battery_bitmap(100, power), 8.6, 15.2);
         assert_eq!(at_bolt(Power::Battery), [59, 224, 84]);
         assert_eq!(at_bolt(Power::Charging), [255, 255, 255]);
         assert_eq!(at_bolt(Power::Plugged), [255, 255, 255]);
     }
 
-    fn volume_pixels(level: u8, muted: bool) -> Vec<u8> {
+    #[test]
+    fn the_outline_and_terminal_are_drawn() {
+        let bitmap = battery_bitmap(0, Power::Battery);
+        assert!(alpha_at(&bitmap, 2.0, 16.0) > 200);
+        assert!(alpha_at(&bitmap, 54.0, 16.0) > 200);
+        assert_eq!(alpha_at(&bitmap, 30.0, 16.0), 0);
+        assert_eq!(alpha_at(&bitmap, 0.2, 0.2), 0);
+    }
+
+    fn volume_bitmap(level: u8, muted: bool) -> Bitmap {
         render(&WidgetIcon::Volume { level, muted })
     }
 
@@ -316,7 +366,7 @@ mod tests {
 
     #[test]
     fn the_volume_bars_light_up_from_the_left_in_red_green_and_orange() {
-        let at = |level, bar: (f32, f32)| rgb_at(&volume_pixels(level, false), bar.0, bar.1);
+        let at = |level, bar: (f32, f32)| rgb_at(&volume_bitmap(level, false), bar.0, bar.1);
         assert_eq!(at(1, LOW_BAR), [247, 33, 51]);
         assert_eq!(at(2, MID_BAR), [59, 224, 84]);
         assert_eq!(at(3, HIGH_BAR), [255, 107, 43]);
@@ -324,7 +374,7 @@ mod tests {
 
     #[test]
     fn the_unlit_volume_bars_are_dim() {
-        let alpha = |level, bar: (f32, f32)| alpha_at(&volume_pixels(level, false), bar.0, bar.1);
+        let alpha = |level, bar: (f32, f32)| alpha_at(&volume_bitmap(level, false), bar.0, bar.1);
         assert_eq!(alpha(1, LOW_BAR), 255);
         assert!(alpha(1, MID_BAR) > 0 && alpha(1, MID_BAR) < 100);
         assert!(alpha(2, HIGH_BAR) > 0 && alpha(2, HIGH_BAR) < 100);
@@ -333,18 +383,9 @@ mod tests {
 
     #[test]
     fn a_muted_volume_has_dim_bars_and_a_red_slash() {
-        let pixels = volume_pixels(3, true);
-        assert!(alpha_at(&pixels, LOW_BAR.0, LOW_BAR.1) < 100);
-        assert!(alpha_at(&pixels, HIGH_BAR.0, HIGH_BAR.1) < 100);
-        assert!(alpha_at(&pixels, 16.0, 17.5) > 200);
-    }
-
-    #[test]
-    fn the_outline_and_cap_are_drawn() {
-        let pixels = battery_pixels(0, Power::Battery);
-        assert!(alpha_at(&pixels, 9.0, 18.0) > 200);
-        assert!(alpha_at(&pixels, 16.0, 4.0) > 200);
-        assert_eq!(alpha_at(&pixels, 16.0, 18.0), 0);
-        assert_eq!(alpha_at(&pixels, 2.0, 2.0), 0);
+        let bitmap = volume_bitmap(3, true);
+        assert!(alpha_at(&bitmap, LOW_BAR.0, LOW_BAR.1) < 100);
+        assert!(alpha_at(&bitmap, HIGH_BAR.0, HIGH_BAR.1) < 100);
+        assert!(alpha_at(&bitmap, 16.0, 17.5) > 200);
     }
 }
