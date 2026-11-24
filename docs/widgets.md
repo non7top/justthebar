@@ -16,7 +16,7 @@ left of the clock). A change applies while the bar runs. An unknown name is skip
 | Name | Shows | Click |
 |---|---|---|
 | `battery` | a vertical battery drawn by the bar, filled to the level with the percentage: green from 50%, yellow from 25%, orange above 15%, red at 15% or less; green with a bolt while the power cable is connected (charging, or plugged in and full); hidden on a machine without a battery | opens the Windows quick settings |
-| `language` | the three letter code of the input language of the foreground window, such as `ENG` | opens a menu of the installed keyboard layouts; the choice is applied to the window that had the focus |
+| `language` | the two letter code of the input language of the foreground window, such as `EN` (three letters for a language that has no two letter code) | opens a menu of the installed keyboard layouts; the choice is applied to the window that had the focus |
 | `network` | Wi-Fi signal bars, a plug for a cable, a globe when offline | opens the Windows quick settings |
 | `volume` | a speaker drawn by the bar with up to three waves for the level, or a cross when muted or at 0%, with the percentage | opens the Windows quick settings |
 

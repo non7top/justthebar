@@ -174,7 +174,8 @@ pub fn network_state(network: &Network) -> WidgetState {
     }
 }
 
-/// The input language indicator: the three letter language code in capitals, such as `ENG`.
+/// The input language indicator: the language code in capitals, two letters such as `EN` (three
+/// for a language that has no two letter code).
 pub fn language_state(iso_code: &str) -> WidgetState {
     let code: String = iso_code
         .chars()
@@ -252,11 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn language_is_three_capital_letters() {
-        let state = language_state("eng");
-        assert_eq!(state.label, "ENG");
+    fn language_is_two_capital_letters() {
+        let state = language_state("en");
+        assert_eq!(state.label, "EN");
+        assert_eq!(state.tooltip, "Input language: EN");
         assert!(!state.has_art());
         assert_eq!(language_state("ru").label, "RU");
+        assert_eq!(language_state("fil").label, "FIL");
     }
 
     #[test]
@@ -266,9 +269,9 @@ mod tests {
         assert_eq!(battery.stacked, 2.0 + 28.0 + 2.0);
         assert_eq!(battery.compact, 24.0);
         assert!(battery.compact < battery.stacked && battery.stacked < battery.side);
-        let language = sizes(&language_state("eng"), 29.0);
+        let language = sizes(&language_state("en"), 20.0);
         assert_eq!(language.side, language.compact);
-        assert_eq!(language.side, 2.0 + 31.0 + 2.0);
+        assert_eq!(language.side, 2.0 + 22.0 + 2.0);
     }
 
     #[test]
