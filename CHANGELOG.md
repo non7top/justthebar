@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.0](https://github.com/non7top/justthebar/compare/v0.1.0...v0.2.0) (2026-11-24)
+
+
+### Features
+
+* **widgets:** a fat battery on its side with the number on it, glyphs centered on their ink ([5ede4f0](https://github.com/non7top/justthebar/commit/5ede4f0b2a3546661063a9ab3ba9caf8c2dc19fb))
+* **widgets:** measured cells, stacked layout, drawn battery and volume icons, power cable state ([095ce86](https://github.com/non7top/justthebar/commit/095ce86b43f2d8b38b231e6282ced5605230ae76))
+* **widgets:** scale the row down to a minimum before stacking, no labels on volume and battery, larger battery icon ([68a8007](https://github.com/non7top/justthebar/commit/68a80072863c405317348813ed2f9ed6b90d9673))
+* **widgets:** show the input language as a two letter code ([5569806](https://github.com/non7top/justthebar/commit/556980610a9f2a4618a11226df5d6f0853e835d1))
+* **widgets:** the battery is blue while the power cable is connected ([7b42e50](https://github.com/non7top/justthebar/commit/7b42e508409bc51796cb7d88996c6edc28acd555))
+
+
+### Bug Fixes
+
+* **startart:** handle the optional output buffer size of png 0.18 ([8fe7c21](https://github.com/non7top/justthebar/commit/8fe7c21480bcaefce699b308f583b81b1b0ea3d0))
+* **startart:** read the PNG from a cursor, as png 0.18 needs a seekable reader ([3d959f3](https://github.com/non7top/justthebar/commit/3d959f38bde34b1fbe9a9168d195f5e306e68d65))
+* **widgets:** draw the battery as tall as the signal glyph ([5299028](https://github.com/non7top/justthebar/commit/529902842e48d48de5d05e077bd3f0adfc0dcff7))
+* **widgets:** fit the side bar widgets with scaled, measured cells, drawn battery and volume icons and no SSID polling ([cfd817d](https://github.com/non7top/justthebar/commit/cfd817ddf10104c4e62374069553d8f142f3cf50))
+* **widgets:** read the Wi-Fi name only for the tooltip, add the volume bars and battery number, scale the row up and down ([7e6551a](https://github.com/non7top/justthebar/commit/7e6551aae3d3f4b5a1fd142cde9b2f90fa11f081))
+* **widgets:** wrap bar widgets onto a second row on a side bar instead of shrinking them and cutting the labels ([e412830](https://github.com/non7top/justthebar/commit/e41283089d5e25a697b47a3fed06437706498739))
+
 ## 0.1.0 (2026-11-21)
 
 
