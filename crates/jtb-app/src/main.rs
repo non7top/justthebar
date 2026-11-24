@@ -1529,7 +1529,42 @@ pub fn quit() {
     unsafe { PostQuitMessage(0) };
 }
 
+/// Prints the version to the console that started the app; the app has no console of its own.
+fn print_version() {
+    use windows::Win32::Foundation::GENERIC_WRITE;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Console::{
+        AttachConsole, GetStdHandle, SetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+    };
+    unsafe {
+        let redirected = GetStdHandle(STD_OUTPUT_HANDLE).is_ok_and(|h| !h.is_invalid());
+        if !redirected && AttachConsole(ATTACH_PARENT_PROCESS).is_ok() {
+            if let Ok(out) = CreateFileW(
+                w!("CONOUT$"),
+                GENERIC_WRITE.0,
+                FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            ) {
+                let _ = SetStdHandle(STD_OUTPUT_HANDLE, out);
+            }
+        }
+    }
+    println!("jtb-app {}", env!("JTB_VERSION"));
+}
+
 fn main() -> Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        print_version();
+        return Ok(());
+    }
     std::panic::set_hook(Box::new(|info| log(&format!("panic: {info}"))));
     let startup_args: Vec<std::ffi::OsString> = std::env::args_os()
         .skip(1)
@@ -1567,8 +1602,10 @@ fn main() -> Result<()> {
     }
 
     log(&format!(
-        "start quit_after={:?} restore={}",
-        args.quit_after_secs, args.restore_explorer
+        "start version={} quit_after={:?} restore={}",
+        env!("JTB_VERSION"),
+        args.quit_after_secs,
+        args.restore_explorer
     ));
     load_state();
     if args.restore_explorer {

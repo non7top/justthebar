@@ -9,6 +9,10 @@ on:
         description: Commit or tag to build; the triggering ref when empty
         type: string
         default: ''
+      release-version:
+        description: Version of a release build; it is embedded in the binaries along with the repo
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -60,6 +64,9 @@ jobs:
         run: cargo test -p jtb-core
 
       - name: Build
+        env:
+          RELEASE_VERSION: ${{ inputs.release-version }}
+          PROVENANCE_REPO: ${{ inputs.release-version != '' && github.repository || '' }}
         run: cargo build --release --target "$TARGET"
 
       - name: Upload exe and hook DLL

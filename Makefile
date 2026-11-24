@@ -2,8 +2,9 @@ ACT_IMAGE := catthehacker/ubuntu:act-latest
 ARTIFACTS := dist/artifacts
 
 DEPLOY_DIR := /mnt/d/tmp/jtb
+VERSION ?= 0.0.0
 
-.PHONY: build deploy fmt fmt-image
+.PHONY: build deploy fmt fmt-image installer installer-image
 build:
 	act pull_request -W .github/workflows/build.yml -P ubuntu-latest=$(ACT_IMAGE) --artifact-server-path $(ARTIFACTS)
 
@@ -13,6 +14,13 @@ fmt-image:
 
 fmt: fmt-image
 	docker run --rm --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/w -w /w jtb-fmt cargo fmt --all
+
+installer-image:
+	docker build -q -t jtb-nsis -f tools/nsis.Dockerfile tools
+
+# Builds dist/jtb-$(VERSION)-setup.exe from the exe and DLL that make deploy unzipped into dist.
+installer: installer-image
+	docker run --rm --user "$$(id -u):$$(id -g)" -e PROVENANCE_REPO -v "$(CURDIR)":/w -w /w jtb-nsis installer/build.sh $(VERSION) dist dist/jtb-$(VERSION)-setup.exe
 
 # Copies the built exe and hook DLL to D:\tmp\jtb; it is launched by hand on Windows.
 deploy:
