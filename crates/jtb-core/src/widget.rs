@@ -22,10 +22,12 @@ impl WidgetState {
         self.icon.is_some() || !self.symbol.is_empty()
     }
 
-    /// Height of the icon on the bar in pixels at 100% scale; the drawn icons are larger than glyphs.
+    /// Height of the icon on the bar in pixels at 100% scale. The battery is as tall as the ink of
+    /// the signal glyph beside it; the volume bars are drawn larger than the glyphs.
     pub fn icon_size(&self) -> f32 {
         match self.icon {
-            Some(_) => DRAWN_ICON,
+            Some(WidgetIcon::Battery { .. }) => BATTERY_ICON,
+            Some(WidgetIcon::Volume { .. }) => VOLUME_ICON,
             None => ICON,
         }
     }
@@ -43,7 +45,8 @@ impl WidgetState {
 
 /// Size of an icon on the bar, in pixels at 100% scale.
 pub const ICON: f32 = 20.0;
-const DRAWN_ICON: f32 = 26.0;
+const VOLUME_ICON: f32 = 26.0;
+const BATTERY_ICON: f32 = 18.0;
 /// Space around a widget's content, and between its icon and label.
 pub const PAD: f32 = 2.0;
 pub const GAP: f32 = 3.0;
@@ -331,16 +334,16 @@ mod tests {
     }
 
     #[test]
-    fn the_drawn_icons_are_larger_than_glyphs() {
+    fn the_volume_bars_are_larger_than_glyphs_and_the_battery_as_tall_as_the_signal_ink() {
         let battery = battery_state(80, Power::Battery);
-        assert_eq!(battery.icon_size(), 26.0);
+        assert_eq!(battery.icon_size(), 18.0);
         assert_eq!(volume_state(80, false).icon_size(), 26.0);
         assert_eq!(language_state("en").icon_size(), 20.0);
         assert!(battery.label_on_icon());
         assert!(!volume_state(80, false).label_on_icon());
         assert_eq!(battery.icon_aspect(), 1.75);
         let battery_sizes = sizes(&battery, 26.0);
-        assert_eq!(battery_sizes.side, 2.0 + 45.5 + 2.0);
+        assert_eq!(battery_sizes.side, 2.0 + 31.5 + 2.0);
         assert_eq!(battery_sizes.stacked, battery_sizes.side);
         assert_eq!(battery_sizes.compact, battery_sizes.side);
     }
