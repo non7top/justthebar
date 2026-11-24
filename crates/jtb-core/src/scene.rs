@@ -2,12 +2,16 @@ use std::sync::Arc;
 
 use crate::activity::ActivityState;
 use crate::buttons::{
-    bar_layout_with_widgets, clock_rect_sized, default_clock_extent, icon_rect, stripe_split,
-    title_left, tray_icon_rect,
+    bar_layout_with_plan, clock_rect_sized, default_clock_extent, icon_rect, plan_widgets,
+    stripe_split, title_left, tray_icon_rect, WidgetTier,
 };
 use crate::clock::{self, Align, Line, Time};
 use crate::icon::Icon;
+use crate::widget::{self, WidgetSizes};
 use crate::Edge;
+
+/// Font size of a label drawn on an icon, as a factor of the bar's.
+const OVERLAY_FONT: f32 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
@@ -51,6 +55,8 @@ pub struct Label {
     pub color: Color,
     /// Left for task buttons; the clock lines each choose their own.
     pub align: Align,
+    /// Factor on the scene's font size; below 1.0 for text on widgets scaled down to fit.
+    pub font_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,12 +116,17 @@ pub struct TrayView {
 /// What one widget placed on the bar itself shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetView {
-    /// The glyph, drawn as a white icon.
+    /// The icon.
     pub symbol: Option<Arc<Icon>>,
-    /// Text next to the glyph (or alone).
+    /// Text next to or under the icon (or alone).
     pub label: String,
-    /// How long the widget is along the bar, in pixels at 100% scale.
-    pub length: f32,
+    /// How long the widget is along the bar in each layout, in pixels at 100% scale.
+    pub sizes: WidgetSizes,
+    /// Height of the icon in pixels at 100% scale, and its width over its height.
+    pub icon_size: f32,
+    pub icon_aspect: f32,
+    /// The label goes on the icon, centered, instead of beside or under it.
+    pub label_on_icon: bool,
     pub hovered: bool,
 }
 
@@ -263,10 +274,12 @@ pub fn build_scene_with_widgets(
             text: line.text.clone(),
             color: white,
             align: line.align,
+            font_scale: 1.0,
         })
         .collect();
-    let lengths: Vec<f32> = widgets.iter().map(|w| w.length).collect();
-    let layout = bar_layout_with_widgets(
+    let sizes: Vec<[f32; 3]> = widgets.iter().map(|w| w.sizes.array()).collect();
+    let plan = plan_widgets(edge, width, scale, &sizes);
+    let layout = bar_layout_with_plan(
         edge,
         width,
         height,
@@ -274,7 +287,7 @@ pub fn build_scene_with_widgets(
         buttons.len(),
         start_art_size(buttons),
         tray.len(),
-        &lengths,
+        &plan,
         clock_extent,
     );
     for (cell, view) in layout.tray.iter().zip(tray) {
@@ -298,36 +311,113 @@ pub fn build_scene_with_widgets(
                 color: Color { a: 0.22, ..white },
             });
         }
-        let mut text = *cell;
-        let mut centered = true;
-        if let Some(symbol) = &view.symbol {
-            let size = 20.0 * scale;
-            let left = if view.label.is_empty() {
-                (cell.left + cell.right - size) / 2.0
-            } else {
-                cell.left + 6.0 * scale
-            };
-            let top = (cell.top + cell.bottom - size) / 2.0;
-            icons.push(IconDraw {
-                rect: Rect {
-                    left,
-                    top,
-                    right: left + size,
-                    bottom: top + size,
-                },
-                icon: Arc::clone(symbol),
-                opacity: 1.0,
-            });
-            text.left = left + size + 4.0 * scale;
-            centered = false;
+        let has_label = !view.label.is_empty();
+        let factor = plan.factor;
+        let pad = widget::PAD * scale * factor;
+        let Some(symbol) = &view.symbol else {
+            if has_label {
+                let mut rect = *cell;
+                if plan.tier == WidgetTier::Stacked {
+                    // Text alone sits on the row of the icons of the other widgets.
+                    rect.top = cell.top + widget::PAD * scale;
+                    rect.bottom = rect.top + widget::ICON * scale;
+                }
+                labels.push(Label {
+                    rect,
+                    text: view.label.clone(),
+                    color: white,
+                    align: Align::Center,
+                    font_scale: factor,
+                });
+            }
+            continue;
+        };
+        let size = view.icon_size * scale * factor;
+        let icon_width = size * view.icon_aspect;
+        let middle = (cell.top + cell.bottom - size) / 2.0;
+        let centered = (cell.left + cell.right - icon_width) / 2.0;
+        let (left, top) = match plan.tier {
+            WidgetTier::SideBySide if has_label && !view.label_on_icon => {
+                // A cell stretched past the widget's own length centers its content.
+                let spare = (cell.right - cell.left - view.sizes.side * scale * factor).max(0.0);
+                (cell.left + pad + spare / 2.0, middle)
+            }
+            WidgetTier::Stacked => (centered, cell.top + pad),
+            _ => (centered, middle),
+        };
+        icons.push(IconDraw {
+            rect: Rect {
+                left,
+                top,
+                right: left + icon_width,
+                bottom: top + size,
+            },
+            icon: Arc::clone(symbol),
+            opacity: 1.0,
+        });
+        if !has_label {
+            continue;
         }
-        if !view.label.is_empty() {
+        if view.label_on_icon {
+            // Over the body of the icon; a dark outline keeps the digits readable on the fill.
+            let body = Rect {
+                left: left + icon_width * 0.02,
+                right: left + icon_width * 0.93,
+                top,
+                bottom: top + size,
+            };
+            let outline = Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.9,
+            };
+            let step = scale.max(1.0);
+            for (dx, dy) in [(-step, 0.0), (step, 0.0), (0.0, -step), (0.0, step)] {
+                labels.push(Label {
+                    rect: Rect {
+                        left: body.left + dx,
+                        right: body.right + dx,
+                        top: body.top + dy,
+                        bottom: body.bottom + dy,
+                    },
+                    text: view.label.clone(),
+                    color: outline,
+                    align: Align::Center,
+                    font_scale: OVERLAY_FONT * factor,
+                });
+            }
             labels.push(Label {
-                rect: text,
+                rect: body,
                 text: view.label.clone(),
                 color: white,
-                align: if centered { Align::Center } else { Align::Left },
+                align: Align::Center,
+                font_scale: OVERLAY_FONT * factor,
             });
+            continue;
+        }
+        match plan.tier {
+            WidgetTier::SideBySide => labels.push(Label {
+                rect: Rect {
+                    left: left + size + widget::GAP * scale * factor,
+                    ..*cell
+                },
+                text: view.label.clone(),
+                color: white,
+                align: Align::Left,
+                font_scale: factor,
+            }),
+            WidgetTier::Stacked => labels.push(Label {
+                rect: Rect {
+                    top: top + size + scale,
+                    ..*cell
+                },
+                text: view.label.clone(),
+                color: white,
+                align: Align::Center,
+                font_scale: 1.0,
+            }),
+            WidgetTier::GlyphOnly => {}
         }
     }
     for (rect, button) in layout.rows.into_iter().zip(buttons) {
@@ -477,6 +567,7 @@ pub fn build_scene_with_widgets(
                 ..white
             },
             align: Align::Left,
+            font_scale: 1.0,
         });
     }
     Scene {

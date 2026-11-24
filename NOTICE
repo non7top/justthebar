@@ -9,3 +9,11 @@ The reading of Start button art strips (crates/jtb-core/src/startart.rs) follows
 loading code of Open-Shell (https://github.com/Open-Shell/Open-Shell-Menu), MIT licensed,
 Copyright (c) 2009-2017 Ivo Beltchev, (c) 2017-2018 The Open-Shell Team. No Open-Shell
 artwork is included; users supply their own button image.
+
+The volume bars (crates/jtb-core/src/widgeticon.rs) are the CC0 "Volume Level Indicator" drawing
+from SVG Repo (https://www.svgrepo.com/svg/64394/volume-level-indicator).
+
+The battery icon (crates/jtb-core/src/widgeticon.rs) is modeled on the design of the "Phone battery
+charge status flat symbols set" by pch.vector (https://www.magnific.com/author/pch-vector), a
+free license that requires attribution. No artwork from the set is included; the icon is drawn
+in code.

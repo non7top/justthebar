@@ -7,10 +7,14 @@ use jtb_core::config::{WidgetConfig, WidgetPlace};
 use jtb_core::icon::Icon;
 use jtb_core::scene::WidgetView;
 use jtb_core::widget::{self, WidgetState};
+use jtb_core::widgeticon;
 use jtb_win::{glyph, system};
 
 const SYMBOL_FONT: &str = "Segoe MDL2 Assets";
 const TEXT_FONT: &str = "Segoe UI Semibold";
+/// The font and pixel size the bar draws labels in; a label is measured in it to size its cell.
+const BAR_FONT: &str = "Segoe UI";
+const BAR_FONT_PX: u32 = 14;
 const BITMAP_SIZE: u32 = 32;
 const WHITE: [u8; 3] = [255, 255, 255];
 
@@ -31,6 +35,11 @@ pub trait Widget {
     fn quick(&self) -> bool {
         false
     }
+    /// A tooltip read when it is shown, for what is too costly or gated to read on every poll; none
+    /// uses the one in the state.
+    fn tooltip(&mut self) -> Option<String> {
+        None
+    }
     /// A left click on the widget.
     fn click(&mut self) -> Option<Action> {
         None
@@ -45,7 +54,7 @@ impl Widget for Battery {
     }
 
     fn state(&mut self) -> Option<WidgetState> {
-        system::battery().map(|(percent, charging)| widget::battery_state(percent, charging))
+        system::battery().map(|(percent, power)| widget::battery_state(percent, power))
     }
 
     fn click(&mut self) -> Option<Action> {
@@ -107,6 +116,8 @@ impl Widget for Volume {
 #[derive(Default)]
 struct Network {
     was_offline: bool,
+    /// The signal of the Wi-Fi connection at the last poll; none when not on Wi-Fi.
+    quality: Option<u8>,
 }
 
 impl Widget for Network {
@@ -125,7 +136,19 @@ impl Widget for Network {
             ));
         }
         self.was_offline = offline;
+        self.quality = match network {
+            widget::Network::Wifi { quality, .. } => Some(quality),
+            _ => None,
+        };
         Some(state)
+    }
+
+    fn tooltip(&mut self) -> Option<String> {
+        let quality = self.quality?;
+        Some(widget::wifi_tooltip(
+            system::wifi_name().as_deref(),
+            quality,
+        ))
     }
 
     fn click(&mut self) -> Option<Action> {
@@ -148,6 +171,8 @@ struct Shown {
     state: WidgetState,
     symbol: Option<Arc<Icon>>,
     label: Option<Arc<Icon>>,
+    /// Width of the label on the bar in pixels at 100% scale; zero without a label.
+    label_width: f32,
 }
 
 struct Cell {
@@ -160,11 +185,11 @@ thread_local! {
     static CELLS: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
 }
 
-fn draw(font: &str, text: &str, em: u32, tint: [u8; 3]) -> Option<Arc<Icon>> {
+fn draw(font: &str, text: &str, em: u32, tint: [u8; 3], center_on: &str) -> Option<Arc<Icon>> {
     if text.is_empty() {
         return None;
     }
-    let bgra = glyph::render(font, text, BITMAP_SIZE, em, tint)?;
+    let bgra = glyph::render(font, text, BITMAP_SIZE, em, tint, center_on)?;
     Some(Arc::new(Icon {
         id: crate::next_icon_id(),
         width: BITMAP_SIZE,
@@ -173,15 +198,51 @@ fn draw(font: &str, text: &str, em: u32, tint: [u8; 3]) -> Option<Arc<Icon>> {
     }))
 }
 
+/// The glyph whose ink a symbol is centered on: the partial signal glyphs share the place of the
+/// full one, so that the bars grow in place.
+fn centering_glyph(symbol: &str) -> &str {
+    const PARTIAL_WIFI: [&str; 3] = ["\u{E872}", "\u{E873}", "\u{E874}"];
+    if PARTIAL_WIFI.contains(&symbol) {
+        "\u{E701}"
+    } else {
+        symbol
+    }
+}
+
 fn show(state: WidgetState) -> Shown {
-    Shown {
-        symbol: draw(
+    let symbol = match &state.icon {
+        Some(icon) => {
+            let bitmap = widgeticon::render(icon);
+            Some(Arc::new(Icon {
+                id: crate::next_icon_id(),
+                width: bitmap.width,
+                height: bitmap.height,
+                bgra: bitmap.bgra,
+            }))
+        }
+        None => draw(
             SYMBOL_FONT,
             &state.symbol,
             BITMAP_SIZE,
             state.tint.unwrap_or(WHITE),
+            centering_glyph(&state.symbol),
         ),
-        label: draw(TEXT_FONT, &state.label, BITMAP_SIZE * 3 / 4, WHITE),
+    };
+    let label_width = if state.label.is_empty() {
+        0.0
+    } else {
+        glyph::text_width(BAR_FONT, &state.label, BAR_FONT_PX) as f32
+    };
+    Shown {
+        symbol,
+        label: draw(
+            TEXT_FONT,
+            &state.label,
+            BITMAP_SIZE * 3 / 4,
+            WHITE,
+            &state.label,
+        ),
+        label_width,
         state,
     }
 }
@@ -266,7 +327,9 @@ pub fn tray_icons() -> Vec<Arc<Icon>> {
         let mut icons = Vec::new();
         for cell in cells.iter().filter(|c| c.place == WidgetPlace::Tray) {
             if let Some(shown) = &cell.shown {
-                if let Some(icon) = shown.symbol.as_ref().or(shown.label.as_ref()) {
+                // The cell is square, so an icon of another shape gives way to the label.
+                let square = shown.symbol.as_ref().filter(|s| s.width == s.height);
+                if let Some(icon) = square.or(shown.label.as_ref()) {
                     icons.push(Arc::clone(icon));
                 }
             }
@@ -286,7 +349,10 @@ pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
             .map(|(at, shown)| WidgetView {
                 symbol: shown.symbol.clone(),
                 label: shown.state.label.clone(),
-                length: widget::bar_length(&shown.state),
+                sizes: widget::sizes(&shown.state, shown.label_width),
+                icon_size: shown.state.icon_size(),
+                icon_aspect: shown.state.icon_aspect(),
+                label_on_icon: shown.state.label_on_icon(),
                 hovered: hovered == Some(at),
             })
             .collect()
@@ -296,8 +362,9 @@ pub fn bar_views(hovered: Option<usize>) -> Vec<WidgetView> {
 /// The tooltip of the `at`th shown widget (tray ones first, then bar ones).
 pub fn tooltip(at: usize) -> Option<String> {
     CELLS.with_borrow_mut(|cells| {
-        nth_shown(cells, at)
-            .and_then(|cell| cell.shown.as_ref().map(|shown| shown.state.tooltip.clone()))
+        let cell = nth_shown(cells, at)?;
+        let shown = cell.shown.as_ref()?.state.tooltip.clone();
+        Some(cell.widget.tooltip().unwrap_or(shown))
     })
 }
 

@@ -181,9 +181,8 @@ impl Renderer for D2dRenderer {
     fn draw(&mut self, scene: &Scene) -> Result<()> {
         self.sync_bitmaps(scene)?;
         unsafe {
-            let left = self.text_format(scene.font_px, Align::Left)?;
-            let center = self.text_format(scene.font_px, Align::Center)?;
-            let right = self.text_format(scene.font_px, Align::Right)?;
+            let mut formats: std::collections::HashMap<(u32, u8), IDWriteTextFormat> =
+                std::collections::HashMap::new();
 
             self.target.BeginDraw();
             self.target.Clear(Some(&color(scene.background)));
@@ -209,14 +208,21 @@ impl Renderer for D2dRenderer {
                     .target
                     .CreateSolidColorBrush(&color(label.color), None)?;
                 let wide: Vec<u16> = label.text.encode_utf16().collect();
-                let fmt = match label.align {
-                    Align::Left => &left,
-                    Align::Center => &center,
-                    Align::Right => &right,
-                };
+                let px = scene.font_px * label.font_scale;
+                let key = (
+                    px.to_bits(),
+                    match label.align {
+                        Align::Left => 0,
+                        Align::Center => 1,
+                        Align::Right => 2,
+                    },
+                );
+                if let std::collections::hash_map::Entry::Vacant(slot) = formats.entry(key) {
+                    slot.insert(self.text_format(px, label.align)?);
+                }
                 self.target.DrawText(
                     &wide,
-                    fmt,
+                    &formats[&key],
                     &rect(label.rect),
                     &brush,
                     D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
