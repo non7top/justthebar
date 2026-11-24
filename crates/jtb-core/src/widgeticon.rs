@@ -16,6 +16,7 @@ const GREEN: Color = [0.23, 0.88, 0.33];
 const YELLOW: Color = [0.99, 0.84, 0.09];
 const ORANGE: Color = [1.0, 0.42, 0.17];
 const RED: Color = [0.97, 0.13, 0.20];
+const BLUE: Color = [0.20, 0.55, 1.0];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WidgetIcon {
@@ -55,9 +56,11 @@ pub fn render(icon: &WidgetIcon) -> Bitmap {
     canvas.into_bitmap()
 }
 
-/// The fill color: green while the cable is connected, else by level.
+/// The fill color: blue while the cable is connected, else by level.
 pub fn battery_fill(percent: u8, power: Power) -> [u8; 3] {
-    let color = if power != Power::Battery || percent >= 50 {
+    let color = if power != Power::Battery {
+        BLUE
+    } else if percent >= 50 {
         GREEN
     } else if percent >= 25 {
         YELLOW
@@ -330,8 +333,9 @@ mod tests {
         assert_eq!(battery_fill(40, Power::Battery), [252, 214, 23]);
         assert_eq!(battery_fill(20, Power::Battery), [255, 107, 43]);
         assert_eq!(battery_fill(15, Power::Battery), [247, 33, 51]);
-        assert_eq!(battery_fill(15, Power::Charging), [59, 224, 84]);
-        assert_eq!(battery_fill(100, Power::Plugged), [59, 224, 84]);
+        assert_eq!(battery_fill(15, Power::Charging), [51, 140, 255]);
+        assert_eq!(battery_fill(100, Power::Plugged), [51, 140, 255]);
+        assert_eq!(battery_fill(50, Power::Charging), [51, 140, 255]);
         assert_eq!(
             rgb_at(&battery_bitmap(100, Power::Battery), 30.0, 16.0),
             [59, 224, 84]
