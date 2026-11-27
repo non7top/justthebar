@@ -271,7 +271,7 @@ impl Default for MouseConfig {
             header_left: Action::ToggleFold,
             header_middle: Action::Launch,
             window_left: Action::Activate,
-            window_middle: Action::None,
+            window_middle: Action::Launch,
         }
     }
 }
@@ -495,11 +495,15 @@ mod tests {
             defaults.action(Target::Header, Button::Middle),
             Action::Launch
         );
+        assert_eq!(
+            defaults.action(Target::Window, Button::Middle),
+            Action::Launch
+        );
         let config =
-            Config::parse(r#"{"mouse": {"header_left": "activate", "window_middle": "launch"}}"#)
+            Config::parse(r#"{"mouse": {"header_left": "activate", "window_middle": "none"}}"#)
                 .unwrap();
         assert_eq!(config.mouse.header_left, Action::Activate);
-        assert_eq!(config.mouse.window_middle, Action::Launch);
+        assert_eq!(config.mouse.window_middle, Action::None);
         assert_eq!(config.mouse.window_left, Action::Activate);
         assert!(Config::parse(r#"{"mouse": {"header_left": "explode"}}"#).is_err());
     }

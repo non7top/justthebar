@@ -108,7 +108,7 @@ pub const SCHEMA: &[OptionSpec] = &[
         path: "mouse.window_middle",
         kind: Kind::Choice(MOUSE_ACTIONS),
         description: "Middle click on a window button.",
-        default: "none",
+        default: "launch",
     },
     OptionSpec {
         path: "start.enabled",
