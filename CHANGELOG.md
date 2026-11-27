@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/non7top/justthebar/compare/v0.3.0...v0.4.0) (2026-11-27)
+
+
+### Features
+
+* **mouse:** middle click on a window row launches a new instance ([aefac10](https://github.com/non7top/justthebar/commit/aefac10f2e924509dea3af53b826a6111560493c))
+* **mouse:** middle click on a window row launches a new instance ([d7ef091](https://github.com/non7top/justthebar/commit/d7ef091f959aa5b51cf4a84b7ecc919e92b8e5d5))
+
 ## [0.3.0](https://github.com/non7top/justthebar/compare/v0.2.0...v0.3.0) (2026-11-24)
 
 
