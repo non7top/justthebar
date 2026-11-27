@@ -1,6 +1,8 @@
 use std::cell::{Cell, RefCell};
 
-use jtb_core::buttons::{bar_layout_with_plan, hit_test, plan_widgets, tray_icon_rect, BarLayout};
+use jtb_core::buttons::{
+    bar_layout_with_plan, close_rect, hit_test, plan_widgets, row_rect, tray_icon_rect, BarLayout,
+};
 use jtb_core::config::{BarConfig, Button, Config};
 use jtb_core::layout::{corner_insets, edge_offsets, Slot};
 use jtb_core::scene::{
@@ -39,6 +41,13 @@ const TIMER_START_FADE: usize = 1;
 const FADE_TICK_MS: u32 = 30;
 /// Fraction of the fade done per tick: 30 ms of 300 ms, as in Open-Shell.
 const FADE_STEP: f32 = 0.1;
+/// Slides the close button of the hovered window button in and out.
+const TIMER_CLOSE_SLIDE: usize = 2;
+const CLOSE_TICK_MS: u32 = 15;
+/// Fraction of the slide done per tick.
+const CLOSE_STEP: f32 = 0.2;
+/// The close button takes clicks and highlights once this much of it has slid in.
+const CLOSE_ACTIVE_FROM: f32 = 0.5;
 
 struct BarWindow {
     hwnd: HWND,
@@ -58,6 +67,14 @@ struct BarWindow {
     dragging: bool,
     /// How much of the Start button's hot frame is mixed in, 0 to 1.
     start_blend: f32,
+    /// The button the close button is on (or sliding out of), and how far it has slid in, 0 to 1.
+    close_row: Option<usize>,
+    close_slide: f32,
+    /// The button the close button should be on: the hovered one, when it is a window.
+    close_want: Option<usize>,
+    close_hot: bool,
+    /// The button whose close button the left button went down on.
+    close_press: Option<usize>,
     renderer: Option<D2dRenderer>,
 }
 
@@ -155,6 +172,11 @@ pub fn build(planned: Vec<Planned>, flush: bool, config: &Config) {
                 press: None,
                 dragging: false,
                 start_blend: 0.0,
+                close_row: None,
+                close_slide: 0.0,
+                close_want: None,
+                close_hot: false,
+                close_press: None,
                 renderer,
             })
         });
@@ -531,21 +553,23 @@ fn paint(hwnd: HWND, bar: AppBar) {
     let clock_fmt = crate::clock_format();
     let clock_lines = jtb_core::clock::render(&clock_fmt, &clock_time);
     let clock_extent = jtb_core::clock::extent(&clock_fmt, bar.edge().is_horizontal());
-    let (hover, dragged_from, blend, pressed, index, tray_hover) = BARS.with_borrow(|bars| {
-        bars.iter()
-            .find(|b| b.hwnd == hwnd)
-            .map(|b| {
-                (
-                    b.hover,
-                    b.press.filter(|_| b.dragging).map(|(from, _, _)| from),
-                    b.start_blend,
-                    b.press.is_some_and(|(index, _, _)| index == 0),
-                    b.index,
-                    b.tray_hover,
-                )
-            })
-            .unwrap_or((None, None, 0.0, false, 0, None))
-    });
+    let (hover, dragged_from, blend, pressed, index, tray_hover, close) =
+        BARS.with_borrow(|bars| {
+            bars.iter()
+                .find(|b| b.hwnd == hwnd)
+                .map(|b| {
+                    (
+                        b.hover,
+                        b.press.filter(|_| b.dragging).map(|(from, _, _)| from),
+                        b.start_blend,
+                        b.press.is_some_and(|(index, _, _)| index == 0),
+                        b.index,
+                        b.tray_hover,
+                        (b.close_row, b.close_slide, b.close_hot),
+                    )
+                })
+                .unwrap_or((None, None, 0.0, false, 0, None, (None, 0.0, false)))
+        });
     let tray_views = crate::tray_views(index, tray_hover);
     let widget_views = crate::widget_views(index, tray_views.len(), tray_hover);
     let scene = build_scene_with_widgets(
@@ -561,7 +585,10 @@ fn paint(hwnd: HWND, bar: AppBar) {
             .enumerate()
             .map(|(i, view)| {
                 let is_start = view.start.is_some();
+                let on_close = close.0 == Some(i);
                 ButtonView {
+                    close_slide: if on_close { close.1 } else { 0.0 },
+                    close_hot: on_close && close.2,
                     hovered: hover == Some(i),
                     active: view.active || (is_start && pressed),
                     drag: if is_start {
@@ -822,11 +849,116 @@ fn click(hwnd: HWND, bar: AppBar, lparam: LPARAM, button: Button) {
     }
 }
 
+fn row_is_closable(hwnd: HWND, index: usize) -> bool {
+    crate::bar_views(task_monitor_of(hwnd))
+        .get(index)
+        .is_some_and(|view| view.closable)
+}
+
+/// The button whose close button the point is on, once enough of it has slid in.
+fn close_hit(hwnd: HWND, bar: AppBar, lparam: LPARAM) -> Option<usize> {
+    let (row, slide) = BARS.with_borrow(|bars| {
+        bars.iter().find(|b| b.hwnd == hwnd).and_then(|b| {
+            b.close_row
+                .filter(|r| b.close_want == Some(*r))
+                .map(|r| (r, b.close_slide))
+        })
+    })?;
+    if slide < CLOSE_ACTIVE_FROM {
+        return None;
+    }
+    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+    let rect = *layout_of(hwnd, bar).rows.get(row)?;
+    let child = crate::bar_views(task_monitor_of(hwnd))
+        .get(row)
+        .is_some_and(|view| view.child);
+    let close = close_rect(bar.edge(), row_rect(bar.edge(), rect, child, scale), slide);
+    let (x, y) = point_of(lparam);
+    let (x, y) = (x as f32, y as f32);
+    (x >= close.left && x < close.right && y >= close.top && y < close.bottom).then_some(row)
+}
+
+fn set_close_hot(hwnd: HWND, hot: bool) {
+    let changed = BARS.with_borrow_mut(|bars| {
+        bars.iter_mut()
+            .find(|b| b.hwnd == hwnd)
+            .is_some_and(|b| std::mem::replace(&mut b.close_hot, hot) != hot)
+    });
+    if changed {
+        unsafe {
+            let _ = InvalidateRect(Some(hwnd), None, false);
+        }
+    }
+}
+
+fn set_close_press(hwnd: HWND, row: Option<usize>) -> Option<usize> {
+    BARS.with_borrow_mut(|bars| {
+        bars.iter_mut()
+            .find(|b| b.hwnd == hwnd)
+            .and_then(|b| std::mem::replace(&mut b.close_press, row))
+    })
+}
+
+/// After a window was closed the pointer rests on the button that took its place, so its close
+/// button slides in again instead of being there at once for a second click.
+fn restart_close_slide(hwnd: HWND) {
+    let slide = BARS.with_borrow_mut(|bars| {
+        bars.iter_mut().find(|b| b.hwnd == hwnd).is_some_and(|b| {
+            b.close_row = b.close_want;
+            b.close_slide = 0.0;
+            b.close_hot = false;
+            b.close_row.is_some()
+        })
+    });
+    if slide {
+        unsafe {
+            SetTimer(Some(hwnd), TIMER_CLOSE_SLIDE, CLOSE_TICK_MS, None);
+            let _ = InvalidateRect(Some(hwnd), None, false);
+        }
+    }
+}
+
+/// Moves the close button of the hovered window button one tick in, or out once the pointer left.
+fn close_step(hwnd: HWND) {
+    let settled = BARS.with_borrow_mut(|bars| {
+        let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
+            return true;
+        };
+        let Some(row) = bar.close_row else {
+            return true;
+        };
+        if bar.close_want == Some(row) {
+            bar.close_slide = (bar.close_slide + CLOSE_STEP).min(1.0);
+            bar.close_slide >= 1.0
+        } else {
+            bar.close_slide = (bar.close_slide - CLOSE_STEP).max(0.0);
+            let gone = bar.close_slide <= 0.0;
+            if gone {
+                bar.close_row = None;
+                bar.close_hot = false;
+            }
+            gone
+        }
+    });
+    unsafe {
+        let _ = InvalidateRect(Some(hwnd), None, false);
+        if settled {
+            let _ = KillTimer(Some(hwnd), TIMER_CLOSE_SLIDE);
+        }
+    }
+}
+
 /// Moves the hover highlight, and asks for `WM_MOUSELEAVE` once per entry into the window.
 fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) -> Option<usize> {
-    let (changed, start_tracking, hot_changed, before) = BARS.with_borrow_mut(|bars| {
+    let moved = BARS.with_borrow(|bars| {
+        bars.iter()
+            .find(|b| b.hwnd == hwnd)
+            .is_some_and(|b| b.hover != hover)
+    });
+    let closable = moved.then(|| hover.is_some_and(|i| row_is_closable(hwnd, i)));
+    let (changed, start_tracking, hot_changed, before, slide) = BARS.with_borrow_mut(|bars| {
         let Some(bar) = bars.iter_mut().find(|b| b.hwnd == hwnd) else {
-            return (false, false, false, None);
+            return (false, false, false, None, false);
         };
         let start = (hover.is_some() || tray.is_some()) && !bar.tracking;
         bar.tracking |= start;
@@ -835,8 +967,22 @@ fn hover_to(hwnd: HWND, hover: Option<usize>, tray: Option<usize>) -> Option<usi
         let before = bar.tray_hover;
         bar.hover = hover;
         bar.tray_hover = tray;
-        (changed, start, hot_changed, before)
+        let mut slide = false;
+        if let Some(closable) = closable {
+            bar.close_want = hover.filter(|_| closable);
+            if let Some(want) = bar.close_want.filter(|w| bar.close_row != Some(*w)) {
+                bar.close_row = Some(want);
+                bar.close_slide = 0.0;
+            }
+            slide = bar.close_row.is_some();
+        }
+        (changed, start, hot_changed, before, slide)
     });
+    if slide {
+        unsafe {
+            SetTimer(Some(hwnd), TIMER_CLOSE_SLIDE, CLOSE_TICK_MS, None);
+        }
+    }
     // Re-arming the timer on every mouse move would keep it from ever firing.
     if hot_changed && crate::start_enabled() {
         unsafe {
@@ -911,6 +1057,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         crate::tray_press(at, Side::Left);
                         return LRESULT(0);
                     }
+                    if let Some(row) = close_hit(hwnd, bar, lparam) {
+                        set_close_press(hwnd, Some(row));
+                        SetCapture(hwnd);
+                        return LRESULT(0);
+                    }
                     let index = button_at(hwnd, bar, lparam);
                     if index == Some(0) && crate::start_enabled() {
                         crate::note_start_press(true);
@@ -926,6 +1077,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             WM_LBUTTONUP => {
                 let _ = ReleaseCapture();
                 if let Some(bar) = bar {
+                    if let Some(row) = set_close_press(hwnd, None) {
+                        if close_hit(hwnd, bar, lparam) == Some(row) {
+                            crate::close_row(task_monitor_of(hwnd), row);
+                            restart_close_slide(hwnd);
+                        }
+                        return LRESULT(0);
+                    }
                     match hit_at(hwnd, bar, lparam) {
                         Hit::Tray(at) => {
                             crate::tray_mouse(at, Mouse::Up(Side::Left));
@@ -1015,6 +1173,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                         Hit::Nothing | Hit::Clock => (None, None),
                     };
                     let before = hover_to(hwnd, button, tray);
+                    set_close_hot(hwnd, close_hit(hwnd, bar, lparam).is_some());
                     crate::tray_hover_events(before, tray);
                     if before != tray {
                         match tray {
@@ -1038,6 +1197,10 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             WM_TIMER if wparam.0 == TIMER_START_FADE => {
                 fade_step(hwnd);
+                LRESULT(0)
+            }
+            WM_TIMER if wparam.0 == TIMER_CLOSE_SLIDE => {
+                close_step(hwnd);
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),

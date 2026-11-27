@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::activity::ActivityState;
 use crate::buttons::{
-    bar_layout_with_plan, clock_rect_sized, default_clock_extent, icon_rect, plan_widgets,
-    stripe_split, title_left, tray_icon_rect, WidgetTier,
+    bar_layout_with_plan, clock_rect_sized, close_rect, default_clock_extent, icon_rect,
+    plan_widgets, row_rect, stripe_split, title_left, tray_icon_rect, without_close, WidgetTier,
 };
 use crate::clock::{self, Align, Line, Time};
 use crate::icon::Icon;
@@ -150,6 +150,12 @@ pub struct ButtonView {
     pub child: bool,
     /// A group or pin header.
     pub header: bool,
+    /// An open window of its own, which the close button can close.
+    pub closable: bool,
+    /// How far the close button has slid in from the screen edge, 0 to 1.
+    pub close_slide: f32,
+    /// The pointer is on the close button.
+    pub close_hot: bool,
     pub drag: Drag,
     /// Set on the Start button, which is always the first one.
     pub start: Option<StartView>,
@@ -185,6 +191,20 @@ const DROP_LINE: Color = Color {
     r: 0.35,
     g: 0.75,
     b: 1.0,
+    a: 1.0,
+};
+
+/// The close button of a task button, and while the pointer is on it.
+const CLOSE_NORMAL: Color = Color {
+    r: 0.75,
+    g: 0.20,
+    b: 0.20,
+    a: 0.85,
+};
+const CLOSE_HOT: Color = Color {
+    r: 0.92,
+    g: 0.25,
+    b: 0.25,
     a: 1.0,
 };
 
@@ -440,14 +460,7 @@ pub fn build_scene_with_widgets(
             }
             continue;
         }
-        let rect = if button.child && !edge.is_horizontal() {
-            Rect {
-                left: rect.left + 14.0 * scale,
-                ..rect
-            }
-        } else {
-            rect
-        };
+        let rect = row_rect(edge, rect, button.child, scale);
         fills.push(Fill {
             rect,
             color: match (button.active, button.flashing, button.hovered) {
@@ -523,22 +536,25 @@ pub fn build_scene_with_widgets(
                 color: DROP_LINE,
             });
         }
+        let close = (button.closable && button.close_slide > 0.0)
+            .then(|| close_rect(edge, rect, button.close_slide));
+        let body = close.map_or(rect, |close| without_close(edge, rect, close));
         let content = if button.status_changed {
-            let (stripe, rest) = stripe_split(edge, rect, scale);
+            let (stripe, rest) = stripe_split(edge, body, scale);
             fills.push(Fill {
                 rect: stripe,
                 color: Color::rgb(0.20, 0.82, 0.38),
             });
             rest
         } else if button.title_changed {
-            let (stripe, rest) = stripe_split(edge, rect, scale);
+            let (stripe, rest) = stripe_split(edge, body, scale);
             fills.push(Fill {
                 rect: stripe,
                 color: Color::rgb(1.0, 0.35, 0.0),
             });
             rest
         } else {
-            rect
+            body
         };
         let opacity = if dragged {
             DRAGGED_OPACITY
@@ -569,6 +585,26 @@ pub fn build_scene_with_widgets(
             align: Align::Left,
             font_scale: 1.0,
         });
+        if let Some(close) = close {
+            fills.push(Fill {
+                rect: close,
+                color: if button.close_hot {
+                    CLOSE_HOT
+                } else {
+                    CLOSE_NORMAL
+                },
+            });
+            // Narrower than this the letter would spill over the edge of the sliding button.
+            if button.close_slide >= 0.6 {
+                labels.push(Label {
+                    rect: close,
+                    text: "X".into(),
+                    color: white,
+                    align: Align::Center,
+                    font_scale: 1.0,
+                });
+            }
+        }
     }
     Scene {
         background,
@@ -623,6 +659,9 @@ mod tests {
             activity: ActivityState::default(),
             child: false,
             header: false,
+            closable: false,
+            close_slide: 0.0,
+            close_hot: false,
             drag: Drag::None,
             start,
             icon: None,
@@ -768,6 +807,63 @@ mod tests {
         assert!(drawn.icons.is_empty());
     }
 
+    fn window_button(slide: f32) -> ButtonView {
+        ButtonView {
+            title: "w".into(),
+            start: None,
+            closable: true,
+            close_slide: slide,
+            ..start_button(None)
+        }
+    }
+
+    fn title_of(scene: &Scene) -> Rect {
+        scene.labels.iter().find(|l| l.text == "w").unwrap().rect
+    }
+
+    #[test]
+    fn the_close_button_is_a_square_that_pushes_the_title_away_from_the_screen_edge() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let scene = |edge, slide| {
+            build_scene(
+                edge,
+                200.0,
+                600.0,
+                1.0,
+                bg,
+                (1, 1),
+                &[window_button(slide)],
+                &[],
+            )
+        };
+        let closed = scene(Edge::Right, 0.0);
+        assert!(closed.labels.iter().all(|l| l.text != "X"));
+        let open = scene(Edge::Right, 1.0);
+        let row = open.fills[0].rect;
+        let close = open.fills.last().unwrap().rect;
+        assert_eq!(close.right - close.left, close.bottom - close.top);
+        assert_eq!(close.right, row.right);
+        assert!(open.labels.iter().any(|l| l.text == "X"));
+        assert_eq!(title_of(&open).right, close.left - 6.0);
+        assert!(title_of(&open).right < title_of(&closed).right);
+        let left = scene(Edge::Left, 1.0);
+        let close = left.fills.last().unwrap().rect;
+        assert_eq!(close.left, left.fills[0].rect.left);
+        assert!(title_of(&left).left > title_of(&scene(Edge::Left, 0.0)).left);
+    }
+
+    #[test]
+    fn only_a_closable_button_gets_a_close_button() {
+        let bg = Color::rgb(0.0, 0.0, 0.0);
+        let header = ButtonView {
+            closable: false,
+            ..window_button(1.0)
+        };
+        let scene = build_scene(Edge::Right, 200.0, 600.0, 1.0, bg, (1, 1), &[header], &[]);
+        assert!(scene.labels.iter().all(|l| l.text != "X"));
+        assert_eq!(scene.fills.len(), 1);
+    }
+
     #[test]
     fn drag_marks_the_source_and_the_landing_side() {
         assert_eq!(Drag::of(1, 1, Some(3)), Drag::Source);
@@ -790,6 +886,9 @@ mod tests {
             activity: ActivityState::default(),
             child: false,
             header: false,
+            closable: false,
+            close_slide: 0.0,
+            close_hot: false,
             drag,
             start: None,
             icon: None,
@@ -861,6 +960,9 @@ mod tests {
                 activity: ActivityState::default(),
                 child: false,
                 header: false,
+                closable: false,
+                close_slide: 0.0,
+                close_hot: false,
                 drag: Drag::None,
                 start: None,
                 icon: None,
@@ -876,6 +978,9 @@ mod tests {
                 activity: ActivityState::default(),
                 child: false,
                 header: false,
+                closable: false,
+                close_slide: 0.0,
+                close_hot: false,
                 drag: Drag::None,
                 start: None,
                 icon: Some(Arc::new(Icon {
@@ -902,6 +1007,9 @@ mod tests {
             activity: ActivityState::default(),
             child: false,
             header: false,
+            closable: false,
+            close_slide: 0.0,
+            close_hot: false,
             drag: Drag::None,
             start: None,
             icon: None,
@@ -920,6 +1028,9 @@ mod tests {
             activity: ActivityState::default(),
             child: false,
             header: false,
+            closable: false,
+            close_slide: 0.0,
+            close_hot: false,
             drag: Drag::None,
             start: None,
             icon: None,
@@ -945,6 +1056,9 @@ mod tests {
             activity: ActivityState::Idle,
             child: false,
             header: false,
+            closable: false,
+            close_slide: 0.0,
+            close_hot: false,
             drag: Drag::None,
             start: None,
             icon: None,
