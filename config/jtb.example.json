@@ -17,7 +17,7 @@
     "header_left": "toggle_fold",
     "header_middle": "launch",
     "window_left": "activate",
-    "window_middle": "none"
+    "window_middle": "launch"
   },
   "start": {
     "enabled": false,
