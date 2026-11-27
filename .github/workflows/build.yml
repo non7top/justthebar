@@ -22,6 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       artifact-url: ${{ steps.upload.outputs.artifact-url }}
+      version: ${{ steps.vars.outputs.version }}
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       TARGET: x86_64-pc-windows-gnu
       RUST_VERSION: 1.99.1
@@ -29,6 +33,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Record the checked-out commit
+        id: checked_out
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v6
         with:
@@ -63,9 +72,39 @@ jobs:
       - name: Test (jtb-core, host triple)
         run: cargo test -p jtb-core
 
-      - name: Build
+      - name: Predict next version
+        id: predict
+        if: github.event_name == 'pull_request'
+        uses: non7top/release-please-forecast@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          post-comment: 'false'
+
+      # The forecast action leaves the tree on its own preview branch.
+      - name: Restore the checked-out commit for the build
+        if: github.event_name == 'pull_request'
+        run: git checkout ${{ steps.checked_out.outputs.sha }}
+
+      - name: Compute the build version
+        id: vars
         env:
           RELEASE_VERSION: ${{ inputs.release-version }}
+          PREDICTED: ${{ steps.predict.outputs.version }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ steps.checked_out.outputs.sha }}
+        run: |
+          if [ -n "$RELEASE_VERSION" ]; then
+            version=$RELEASE_VERSION
+          elif [ -n "$PREDICTED" ] && [ -n "$PR" ]; then
+            version="$PREDICTED-rc$PR"
+          else
+            version="$(jq -r '."."' .release-please-manifest.json)+${SHA:0:7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          RELEASE_VERSION: ${{ steps.vars.outputs.version }}
           PROVENANCE_REPO: ${{ inputs.release-version != '' && github.repository || '' }}
         run: cargo build --release --target "$TARGET"
 
@@ -92,13 +131,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ needs.build.result }}
           ARTIFACT_URL: ${{ needs.build.outputs.artifact-url }}
+          VERSION: ${{ needs.build.outputs.version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PR: ${{ github.event.pull_request.number }}
           SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           marker='<!-- jtb-build -->'
           if [ "$RESULT" = success ]; then
-            body="$marker"$'\n'"Build passed for ${SHA:0:7}: [jtb-app.exe and jtb_hook.dll]($ARTIFACT_URL), [run]($RUN_URL)."
+            body="$marker"$'\n'"Build $VERSION passed for ${SHA:0:7}: [jtb-app.exe and jtb_hook.dll]($ARTIFACT_URL), [run]($RUN_URL)."
           else
             body="$marker"$'\n'"Build ${RESULT} for ${SHA:0:7}, see the [run]($RUN_URL)."
           fi
