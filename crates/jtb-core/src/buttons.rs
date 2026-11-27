@@ -8,6 +8,8 @@ const BUTTON_MAX_LONG: f32 = 180.0;
 const BUTTON_VERTICAL_LONG: f32 = 30.0;
 const PAD: f32 = 4.0;
 const GAP: f32 = 2.0;
+/// How far a window under a group header is indented on side bars.
+const CHILD_INDENT: f32 = 14.0;
 /// Side of one notification area cell, and of the icon in it.
 const TRAY_CELL: f32 = 24.0;
 const TRAY_ICON: f32 = 16.0;
@@ -557,6 +559,57 @@ pub fn stripe_split(edge: Edge, button: Rect, scale: f32) -> (Rect, Rect) {
     }
 }
 
+/// A task button as drawn: a window under a group header is indented on side bars.
+pub fn row_rect(edge: Edge, rect: Rect, child: bool, scale: f32) -> Rect {
+    if child && !edge.is_horizontal() {
+        Rect {
+            left: rect.left + CHILD_INDENT * scale,
+            ..rect
+        }
+    } else {
+        rect
+    }
+}
+
+/// Width of the close button of a task button: it is a square, as wide as the button is tall.
+pub fn close_width(button: Rect) -> f32 {
+    (button.bottom - button.top)
+        .min(button.right - button.left)
+        .max(0.0)
+}
+
+/// The close button of a task button when `slide` (0 to 1) of it has come in from the end
+/// nearest the screen edge: the left end on a left bar, the right end on the others.
+pub fn close_rect(edge: Edge, button: Rect, slide: f32) -> Rect {
+    let width = close_width(button) * slide.clamp(0.0, 1.0);
+    if edge == Edge::Left {
+        Rect {
+            right: button.left + width,
+            ..button
+        }
+    } else {
+        Rect {
+            left: button.right - width,
+            ..button
+        }
+    }
+}
+
+/// What is left of a task button once `close` has slid in: the rest moves away from the screen edge.
+pub fn without_close(edge: Edge, button: Rect, close: Rect) -> Rect {
+    if edge == Edge::Left {
+        Rect {
+            left: close.right,
+            ..button
+        }
+    } else {
+        Rect {
+            right: close.left,
+            ..button
+        }
+    }
+}
+
 /// Index of the rect containing the point.
 pub fn hit_test(rects: &[Rect], x: f32, y: f32) -> Option<usize> {
     rects
@@ -567,6 +620,53 @@ pub fn hit_test(rects: &[Rect], x: f32, y: f32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn button() -> Rect {
+        Rect {
+            left: 10.0,
+            top: 100.0,
+            right: 190.0,
+            bottom: 130.0,
+        }
+    }
+
+    #[test]
+    fn the_close_button_slides_in_from_the_screen_edge() {
+        let full = close_rect(Edge::Right, button(), 1.0);
+        assert_eq!((full.left, full.right), (160.0, 190.0));
+        let half = close_rect(Edge::Right, button(), 0.5);
+        assert_eq!((half.left, half.right), (175.0, 190.0));
+        assert_eq!(close_rect(Edge::Right, button(), 0.0).left, 190.0);
+        let left = close_rect(Edge::Left, button(), 1.0);
+        assert_eq!((left.left, left.right), (10.0, 40.0));
+        assert_eq!(close_rect(Edge::Bottom, button(), 1.0).left, 160.0);
+    }
+
+    #[test]
+    fn the_rest_of_the_button_moves_away_from_the_screen_edge() {
+        let close = close_rect(Edge::Right, button(), 0.5);
+        assert_eq!(without_close(Edge::Right, button(), close).right, 175.0);
+        let close = close_rect(Edge::Left, button(), 0.5);
+        assert_eq!(without_close(Edge::Left, button(), close).left, 25.0);
+    }
+
+    #[test]
+    fn the_close_button_is_as_wide_as_the_button_is_tall() {
+        let full = close_rect(Edge::Right, button(), 1.0);
+        assert_eq!(full.right - full.left, full.bottom - full.top);
+        let tall = Rect {
+            bottom: 400.0,
+            ..button()
+        };
+        assert_eq!(close_width(tall), 180.0);
+    }
+
+    #[test]
+    fn children_are_indented_on_side_bars_only() {
+        assert_eq!(row_rect(Edge::Left, button(), true, 2.0).left, 38.0);
+        assert_eq!(row_rect(Edge::Left, button(), false, 2.0).left, 10.0);
+        assert_eq!(row_rect(Edge::Bottom, button(), true, 2.0).left, 10.0);
+    }
 
     #[test]
     fn horizontal_buttons_run_left_to_right_before_the_clock() {

@@ -725,6 +725,9 @@ fn start_row(config: &StartConfig) -> (ButtonView, Click) {
         activity: ActivityState::default(),
         child: false,
         header: false,
+        closable: false,
+        close_slide: 0.0,
+        close_hot: false,
         drag: Drag::None,
         start: Some(StartView {
             frames: start_frames(&config.image),
@@ -1020,6 +1023,9 @@ fn build_bar(
                         activity: tasks.activity_state(id),
                         child,
                         header: false,
+                        closable: true,
+                        close_slide: 0.0,
+                        close_hot: false,
                         drag: Drag::None,
                         start: None,
                         icon: icon_of(id),
@@ -1056,6 +1062,9 @@ fn build_bar(
                             .unwrap_or_default(),
                         child: false,
                         header: true,
+                        closable: false,
+                        close_slide: 0.0,
+                        close_hot: false,
                         drag: Drag::None,
                         start: None,
                         icon: pin
@@ -1164,6 +1173,17 @@ pub fn click_row(monitor: Option<RECT>, index: usize, button: Button) {
             Click::Header { windows, .. } if windows.is_empty() => launch_click(&click, &pins),
             _ => toggle_fold(click.key()),
         },
+    }
+}
+
+/// Closes the window the `index`th button of the bar on `monitor` stands for.
+pub fn close_row(monitor: Option<RECT>, index: usize) {
+    let config = current_config();
+    let pins = effective_pins(&config);
+    if let Some((_, Click::Window { id, .. })) =
+        build_bar(monitor, &config, &pins).into_iter().nth(index)
+    {
+        tasks::close(id);
     }
 }
 
