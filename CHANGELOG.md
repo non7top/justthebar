@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/non7top/justthebar/compare/v0.4.0...v0.5.0) (2026-11-27)
+
+
+### Features
+
+* **bar:** a close button slides in from the screen edge on a hovered window button ([003735a](https://github.com/non7top/justthebar/commit/003735a85de9f14703d6fae4903f9a60bd058ce4))
+* **bar:** a close button slides in from the screen edge on a hovered window button ([fd8cb87](https://github.com/non7top/justthebar/commit/fd8cb87ff54859402ac346732b7ba0427a9f2d64))
+
 ## [0.4.0](https://github.com/non7top/justthebar/compare/v0.3.0...v0.4.0) (2026-11-27)
 
 
